@@ -136,25 +136,42 @@ public sealed class RepoToolFactory
         var matches = new StringBuilder();
         var count = 0;
 
-        foreach (var file in Directory.EnumerateFiles(searchRoot, "*", SearchOption.AllDirectories))
+        var pending = new Stack<string>();
+        pending.Push(searchRoot);
+
+        while (pending.Count > 0)
         {
-            if (file.Contains($"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}") ||
-                file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}") ||
-                file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
-            {
-                continue;
-            }
+            var directory = pending.Pop();
 
-            if (!Path.GetFileName(file).Contains(pattern, StringComparison.OrdinalIgnoreCase))
+            try
             {
-                continue;
-            }
+                // Спускаемся только в неигнорируемые подкаталоги.
+                foreach (var subDirectory in Directory.EnumerateDirectories(directory))
+                {
+                    if (!IgnoredDirectories.Contains(Path.GetFileName(subDirectory)))
+                    {
+                        pending.Push(subDirectory);
+                    }
+                }
 
-            matches.AppendLine(Path.GetRelativePath(repoFull, file));
-            if (++count >= MaxSearchResults)
+                foreach (var file in Directory.EnumerateFiles(directory))
+                {
+                    if (!Path.GetFileName(file).Contains(pattern, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    matches.AppendLine(Path.GetRelativePath(repoFull, file));
+                    if (++count >= MaxSearchResults)
+                    {
+                        matches.AppendLine("…(результаты обрезаны)");
+                        return matches.ToString();
+                    }
+                }
+            }
+            catch (Exception)
             {
-                matches.AppendLine("…(результаты обрезаны)");
-                break;
+                // Нет доступа к каталогу или он исчез — пропускаем.
             }
         }
 
