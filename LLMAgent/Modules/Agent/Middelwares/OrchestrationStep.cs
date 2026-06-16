@@ -2,6 +2,7 @@ using LLMAgent.Models;
 using LLMAgent.Models.Enums;
 using LLMAgent.Modules.Logging;
 using LLMAgent.Modules.Router;
+using LLMAgent.Prompts;
 
 namespace LLMAgent.Modules.Agent.Middelwares;
 
@@ -22,7 +23,7 @@ public sealed class OrchestrationStep : IAgentMiddleware
     public async Task Run(AgentEngineDelegate? next, LlmContext context, CancellationToken cancellationToken)
     {
         var chat = _router.GetChat(CognitiveRoutingType.Orchestration);
-        chat.AddMessage($"Git-дифф последних изменений:\n```diff\n{context.Diff}\n```");
+        chat.AddMessage(Prompt.OrchestrationRequestFor(context.Diff));
 
         var result = await chat.GetAnswer<OrchestrationResult>(cancellationToken);
         context.ComplexityScore = Math.Clamp(result?.ComplexityScore ?? 5, 1, 10);

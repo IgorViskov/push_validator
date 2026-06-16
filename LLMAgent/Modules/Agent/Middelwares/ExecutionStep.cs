@@ -2,6 +2,7 @@ using LLMAgent.Models;
 using LLMAgent.Modules.Logging;
 using LLMAgent.Modules.Router;
 using LLMAgent.Modules.Tools;
+using LLMAgent.Prompts;
 
 namespace LLMAgent.Modules.Agent.Middelwares;
 
@@ -32,23 +33,13 @@ public sealed class ExecutionStep : IAgentMiddleware
             chat.AddTool(tool);
         }
 
-        chat.AddMessage(
-            $"""
-             Корень репозитория: {context.RepoPath}
-             Проанализируй изменения. Используй инструменты read_file, git_log, search_files,
-             чтобы проверить затронутые контракты и вызывающий код вне диффа.
-
-             Git-дифф:
-             ```diff
-             {context.Diff}
-             ```
-             """);
+        chat.AddMessage(Prompt.ExecutionRequestFor(context.RepoPath, context.Diff));
 
         // Фаза 1: рассуждение с инструментами (ReAct), свободный текст.
         await chat.GetAnswer(cancellationToken);
 
         // Фаза 2: строго типизированное извлечение находок (без инструментов).
-        chat.AddMessage("Подведи итог анализа: верни все найденные проблемы как список находок.");
+        chat.AddMessage(Prompt.ExecutionSummaryRequest);
         var result = await chat.GetAnswer<AnalysisResult>(cancellationToken);
 
         var findings = result?.ToFindings("Анализ") ?? [];

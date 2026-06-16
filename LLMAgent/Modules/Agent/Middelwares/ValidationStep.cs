@@ -2,6 +2,7 @@ using LLMAgent.Models;
 using LLMAgent.Models.Enums;
 using LLMAgent.Modules.Logging;
 using LLMAgent.Modules.Router;
+using LLMAgent.Prompts;
 
 namespace LLMAgent.Modules.Agent.Middelwares;
 
@@ -22,7 +23,7 @@ public sealed class ValidationStep : IAgentMiddleware
     public async Task Run(AgentEngineDelegate? next, LlmContext context, CancellationToken cancellationToken)
     {
         var chat = _router.GetChat(CognitiveRoutingType.Validation);
-        chat.AddMessage($"Проверь по тексту следующий git-дифф:\n```diff\n{context.Diff}\n```");
+        chat.AddMessage(Prompt.ValidationRequestFor(context.Diff));
 
         var result = await chat.GetAnswer<AnalysisResult>(cancellationToken);
         var findings = result?.ToFindings("Валидация") ?? [];

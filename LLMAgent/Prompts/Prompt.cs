@@ -48,6 +48,48 @@ public static class Prompt
         Если проблем нет — верни {"findings": []}.
         """;
 
+    // --- Сообщения пользователя (запросы к моделям) ---
+
+    public const string OrchestrationRequest =
+        """
+        Git-дифф последних изменений:
+        ```diff
+        {Diff}
+        ```
+        """;
+
+    public const string ExecutionRequest =
+        """
+        Корень репозитория: {RepoPath}
+        Проанализируй изменения. Используй инструменты read_file, git_log, search_files,
+        чтобы проверить затронутые контракты и вызывающий код вне диффа.
+
+        Git-дифф:
+        ```diff
+        {Diff}
+        ```
+        """;
+
+    public const string ExecutionSummaryRequest =
+        "Подведи итог анализа: верни все найденные проблемы как список находок.";
+
+    public const string ValidationRequest =
+        """
+        Проверь по тексту следующий git-дифф:
+        ```diff
+        {Diff}
+        ```
+        """;
+
+    public static string OrchestrationRequestFor(string diff) =>
+        OrchestrationRequest.Replace("{Diff}", diff);
+
+    public static string ExecutionRequestFor(string repoPath, string diff) =>
+        ExecutionRequest.Replace("{RepoPath}", repoPath).Replace("{Diff}", diff);
+
+    public static string ValidationRequestFor(string diff) =>
+        ValidationRequest.Replace("{Diff}", diff);
+
     public static string For(CognitiveRoutingType role) => role switch
     {
         CognitiveRoutingType.Orchestration => Orchestration,
