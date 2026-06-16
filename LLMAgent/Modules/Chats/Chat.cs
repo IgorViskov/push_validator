@@ -1,96 +1,75 @@
 using System.ClientModel;
 using LLMAgent.Models;
+using Microsoft.Extensions.AI;
 using OpenAI;
-using OpenAI.Chat;
 
 namespace LLMAgent.Modules.Chats;
 
 public sealed class Chat
 {
-    private const int MaxToolIterations = 6;
-
-    private readonly ChatClient _chatClient;
-    private readonly List<ChatMessage> _chatMessages = [];
-    private readonly Dictionary<string, AgentTool> _tools = [];
+    private readonly IChatClient _chatClient;
+    private readonly List<ChatMessage> _messages = [];
+    private readonly List<AITool> _tools = [];
 
     public Chat(ModelSetting settings)
     {
-        var client = GetClient(settings);
-        _chatClient = client.GetChatClient(settings.Name);
+        var openAiClient = GetClient(settings);
+
+        // FunctionInvokingChatClient сам выполняет вызовы инструментов и крутит
+        // цикл Reason→Act→Observe внутри одного GetResponseAsync.
+        _chatClient = openAiClient
+            .GetChatClient(settings.Name)
+            .AsIChatClient()
+            .AsBuilder()
+            .UseFunctionInvocation()
+            .Build();
     }
 
     public Chat AddPrompt(string prompt)
     {
-        _chatMessages.Add(new SystemChatMessage(prompt));
+        _messages.Add(new ChatMessage(ChatRole.System, prompt));
         return this;
     }
 
     public Chat AddMessage(string message)
     {
-        _chatMessages.Add(new UserChatMessage(message));
+        _messages.Add(new ChatMessage(ChatRole.User, message));
         return this;
     }
 
-    public Chat AddTool(AgentTool tool)
+    public Chat AddTool(AITool tool)
     {
-        _tools[tool.Definition.FunctionName] = tool;
+        _tools.Add(tool);
         return this;
     }
 
     /// <summary>
-    /// Запускает обмен с моделью. Если модель просит вызвать инструменты (function-calling),
-    /// выполняет их и возвращает результат в диалог — это и есть цикл Reason→Act→Observe.
+    /// Свободный текстовый ответ с доступными инструментами. FunctionInvokingChatClient
+    /// сам выполняет вызовы инструментов и крутит цикл Reason→Act→Observe.
     /// </summary>
     public async Task<string> GetAnswer(CancellationToken cancellationToken = default)
     {
-        var options = new ChatCompletionOptions();
-        foreach (var tool in _tools.Values)
+        var options = new ChatOptions
         {
-            options.Tools.Add(tool.Definition);
-        }
+            Tools = _tools.Count > 0 ? _tools : null
+        };
 
-        for (var iteration = 0; iteration < MaxToolIterations; iteration++)
-        {
-            var completion = await _chatClient.CompleteChatAsync(_chatMessages, options, cancellationToken);
-            var result = completion.Value;
-
-            if (result.FinishReason == ChatFinishReason.ToolCalls && result.ToolCalls.Count > 0)
-            {
-                _chatMessages.Add(new AssistantChatMessage(result));
-                foreach (var call in result.ToolCalls)
-                {
-                    var output = await ExecuteTool(call, cancellationToken);
-                    _chatMessages.Add(new ToolChatMessage(call.Id, output));
-                }
-
-                continue;
-            }
-
-            var text = result.Content.Count > 0 ? result.Content[0].Text : string.Empty;
-            _chatMessages.Add(new AssistantChatMessage(text));
-            return text;
-        }
-
-        return "Превышен лимит итераций инструментов без финального ответа.";
+        var response = await _chatClient.GetResponseAsync(_messages, options, cancellationToken);
+        _messages.AddMessages(response);
+        return response.Text;
     }
 
-    private async Task<string> ExecuteTool(ChatToolCall call, CancellationToken cancellationToken)
+    /// <summary>
+    /// Строго типизированное извлечение результата через structured output
+    /// (response_format по JSON-схеме, выведенной из типа T). Инструменты намеренно
+    /// не передаются: function-calling и принудительная JSON-схема на многих моделях конфликтуют,
+    /// поэтому структуру извлекаем отдельным запросом из уже накопленного контекста.
+    /// </summary>
+    public async Task<T?> GetAnswer<T>(CancellationToken cancellationToken = default)
     {
-        if (!_tools.TryGetValue(call.FunctionName, out var tool))
-        {
-            return $"Инструмент '{call.FunctionName}' не зарегистрирован.";
-        }
-
-        Console.Error.WriteLine($"🔧 function-call: {call.FunctionName}({call.FunctionArguments})");
-
-        try
-        {
-            return await tool.Execute(call.FunctionArguments.ToString(), cancellationToken);
-        }
-        catch (Exception e)
-        {
-            return $"Ошибка инструмента '{call.FunctionName}': {e.Message}";
-        }
+        var response = await _chatClient.GetResponseAsync<T>(_messages, cancellationToken: cancellationToken);
+        _messages.AddMessages(response);
+        return response.TryGetResult(out var result) ? result : default;
     }
 
     private static OpenAIClient GetClient(ModelSetting setting)

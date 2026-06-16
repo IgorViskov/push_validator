@@ -1,13 +1,14 @@
+using System.ComponentModel;
 using System.Text;
-using System.Text.Json;
-using LLMAgent.Modules.Chats;
 using LLMAgent.Modules.Git;
-using OpenAI.Chat;
+using Microsoft.Extensions.AI;
 
 namespace LLMAgent.Modules.Tools;
 
 /// <summary>
 /// Собирает инструменты function-calling, привязанные к конкретному репозиторию.
+/// Схемы инструментов выводятся из сигнатур C#-методов (через AIFunctionFactory),
+/// поэтому отдельный JSON-Schema и ручной разбор аргументов не нужны.
 /// Чтение/поиск вне каталога репозитория требуют разрешения пользователя.
 /// </summary>
 public sealed class RepoToolFactory
@@ -24,111 +25,88 @@ public sealed class RepoToolFactory
         _permission = permission;
     }
 
-    public IReadOnlyList<AgentTool> Build(string repoPath, CancellationToken pipelineToken)
+    public IReadOnlyList<AITool> Build(string repoPath)
     {
         var repoFull = Path.GetFullPath(repoPath);
-        return
-        [
-            ReadFileTool(repoFull),
-            GitLogTool(repoFull, pipelineToken),
-            SearchFilesTool(repoFull)
-        ];
+
+        var readFile = AIFunctionFactory.Create(
+            ([Description("Путь к файлу относительно корня репозитория")] string path)
+                => ReadFile(repoFull, path),
+            name: "read_file",
+            description: "Прочитать содержимое файла из анализируемого репозитория по относительному пути.");
+
+        var gitLog = AIFunctionFactory.Create(
+            ([Description("Сколько коммитов вернуть (по умолчанию 20)")] int? maxCount, CancellationToken ct)
+                => GitLog(repoFull, maxCount ?? 20, ct),
+            name: "git_log",
+            description: "Получить историю последних коммитов локального git-репозитория.");
+
+        var searchFiles = AIFunctionFactory.Create(
+            ([Description("Часть имени файла")] string pattern,
+             [Description("Необязательно: директория поиска (по умолчанию — репозиторий)")] string? directory)
+                => SearchFiles(repoFull, pattern, directory),
+            name: "search_files",
+            description: "Найти файлы по части имени. По умолчанию ищет в репозитории; для другой директории запрашивается разрешение.");
+
+        return [readFile, gitLog, searchFiles];
     }
 
-    private AgentTool ReadFileTool(string repoFull)
+    private string ReadFile(string repoFull, string path)
     {
-        var definition = ChatTool.CreateFunctionTool(
-            "read_file",
-            "Прочитать содержимое файла из анализируемого репозитория по относительному пути.",
-            BinaryData.FromString(
-                """
-                {"type":"object","properties":{"path":{"type":"string","description":"Путь к файлу относительно корня репозитория"}},"required":["path"]}
-                """));
+        Console.Error.WriteLine($"🔧 function-call: read_file({path})");
 
-        return new AgentTool(definition, (args, _) =>
+        if (string.IsNullOrWhiteSpace(path))
         {
-            var path = ReadStringArg(args, "path");
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return Task.FromResult("Не указан аргумент 'path'.");
-            }
+            return "Не указан путь к файлу.";
+        }
 
-            var full = Path.GetFullPath(Path.Combine(repoFull, path));
-            if (!IsInside(repoFull, full) &&
-                !_permission.Ask($"прочитать файл вне репозитория: {full}"))
-            {
-                return Task.FromResult("Доступ к файлу вне репозитория запрещён пользователем.");
-            }
+        var full = Path.GetFullPath(Path.Combine(repoFull, path));
+        if (!IsInside(repoFull, full) && !_permission.Ask($"прочитать файл вне репозитория: {full}"))
+        {
+            return "Доступ к файлу вне репозитория запрещён пользователем.";
+        }
 
-            if (!File.Exists(full))
-            {
-                return Task.FromResult($"Файл не найден: {path}");
-            }
+        if (!File.Exists(full))
+        {
+            return $"Файл не найден: {path}";
+        }
 
-            var content = File.ReadAllText(full);
-            if (content.Length > MaxFileChars)
-            {
-                content = content[..MaxFileChars] + "\n…(файл обрезан)";
-            }
-
-            return Task.FromResult(content);
-        });
+        var content = File.ReadAllText(full);
+        return content.Length > MaxFileChars
+            ? content[..MaxFileChars] + "\n…(файл обрезан)"
+            : content;
     }
 
-    private AgentTool GitLogTool(string repoFull, CancellationToken pipelineToken)
+    private async Task<string> GitLog(string repoFull, int maxCount, CancellationToken ct)
     {
-        var definition = ChatTool.CreateFunctionTool(
-            "git_log",
-            "Получить историю последних коммитов локального git-репозитория.",
-            BinaryData.FromString(
-                """
-                {"type":"object","properties":{"maxCount":{"type":"integer","description":"Сколько коммитов вернуть (по умолчанию 20)"}}}
-                """));
-
-        return new AgentTool(definition, async (args, ct) =>
-        {
-            var max = ReadIntArg(args, "maxCount") ?? 20;
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(pipelineToken, ct);
-            return await _git.GetLog(repoFull, max, linked.Token);
-        });
+        Console.Error.WriteLine($"🔧 function-call: git_log({maxCount})");
+        return await _git.GetLog(repoFull, maxCount, ct);
     }
 
-    private AgentTool SearchFilesTool(string repoFull)
+    private string SearchFiles(string repoFull, string pattern, string? directory)
     {
-        var definition = ChatTool.CreateFunctionTool(
-            "search_files",
-            "Найти файлы по части имени. По умолчанию ищет в репозитории; для другой директории запрашивается разрешение.",
-            BinaryData.FromString(
-                """
-                {"type":"object","properties":{"pattern":{"type":"string","description":"Часть имени файла"},"directory":{"type":"string","description":"Необязательно: директория поиска"}},"required":["pattern"]}
-                """));
+        Console.Error.WriteLine($"🔧 function-call: search_files({pattern}, {directory})");
 
-        return new AgentTool(definition, (args, _) =>
+        if (string.IsNullOrWhiteSpace(pattern))
         {
-            var pattern = ReadStringArg(args, "pattern");
-            if (string.IsNullOrWhiteSpace(pattern))
-            {
-                return Task.FromResult("Не указан аргумент 'pattern'.");
-            }
+            return "Не указан шаблон поиска.";
+        }
 
-            var directory = ReadStringArg(args, "directory");
-            var searchRoot = string.IsNullOrWhiteSpace(directory)
-                ? repoFull
-                : Path.GetFullPath(Path.Combine(repoFull, directory));
+        var searchRoot = string.IsNullOrWhiteSpace(directory)
+            ? repoFull
+            : Path.GetFullPath(Path.Combine(repoFull, directory));
 
-            if (!IsInside(repoFull, searchRoot) &&
-                !_permission.Ask($"искать файлы вне репозитория: {searchRoot}"))
-            {
-                return Task.FromResult("Поиск вне репозитория запрещён пользователем.");
-            }
+        if (!IsInside(repoFull, searchRoot) && !_permission.Ask($"искать файлы вне репозитория: {searchRoot}"))
+        {
+            return "Поиск вне репозитория запрещён пользователем.";
+        }
 
-            if (!Directory.Exists(searchRoot))
-            {
-                return Task.FromResult($"Директория не найдена: {searchRoot}");
-            }
+        if (!Directory.Exists(searchRoot))
+        {
+            return $"Директория не найдена: {searchRoot}";
+        }
 
-            return Task.FromResult(Search(repoFull, searchRoot, pattern));
-        });
+        return Search(repoFull, searchRoot, pattern);
     }
 
     private static string Search(string repoFull, string searchRoot, string pattern)
@@ -183,38 +161,5 @@ public sealed class RepoToolFactory
         var normalizedRoot = Path.TrimEndingDirectorySeparator(root);
         return candidate.Equals(normalizedRoot, StringComparison.OrdinalIgnoreCase) ||
                candidate.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string? ReadStringArg(string args, string name)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(args);
-            return doc.RootElement.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-                ? value.GetString()
-                : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static int? ReadIntArg(string args, string name)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(args);
-            if (doc.RootElement.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number)
-            {
-                return value.GetInt32();
-            }
-        }
-        catch (JsonException)
-        {
-            // игнорируем
-        }
-
-        return null;
     }
 }

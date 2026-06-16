@@ -1,5 +1,5 @@
+using LLMAgent.Models;
 using LLMAgent.Modules.Logging;
-using LLMAgent.Modules.Parsing;
 using LLMAgent.Modules.Router;
 using LLMAgent.Modules.Tools;
 
@@ -27,7 +27,7 @@ public sealed class ExecutionStep : IAgentMiddleware
         var (chat, model) = _router.GetExecutionChat(context.ComplexityScore);
         context.ExecutionModel = model;
 
-        foreach (var tool in _toolFactory.Build(context.RepoPath, cancellationToken))
+        foreach (var tool in _toolFactory.Build(context.RepoPath))
         {
             chat.AddTool(tool);
         }
@@ -35,7 +35,8 @@ public sealed class ExecutionStep : IAgentMiddleware
         chat.AddMessage(
             $"""
              Корень репозитория: {context.RepoPath}
-             Проанализируй изменения. При необходимости используй инструменты read_file, git_log, search_files.
+             Проанализируй изменения. Используй инструменты read_file, git_log, search_files,
+             чтобы проверить затронутые контракты и вызывающий код вне диффа.
 
              Git-дифф:
              ```diff
@@ -43,8 +44,14 @@ public sealed class ExecutionStep : IAgentMiddleware
              ```
              """);
 
-        var answer = await chat.GetAnswer(cancellationToken);
-        var findings = LlmJson.ParseFindings(answer, "Анализ");
+        // Фаза 1: рассуждение с инструментами (ReAct), свободный текст.
+        await chat.GetAnswer(cancellationToken);
+
+        // Фаза 2: строго типизированное извлечение находок (без инструментов).
+        chat.AddMessage("Подведи итог анализа: верни все найденные проблемы как список находок.");
+        var result = await chat.GetAnswer<AnalysisResult>(cancellationToken);
+
+        var findings = result?.ToFindings("Анализ") ?? [];
         context.Findings.AddRange(findings);
 
         _logger.Info("Этап анализа ({Model}) нашёл находок: {Count}", model.Name, findings.Count);

@@ -1,6 +1,6 @@
+using LLMAgent.Models;
 using LLMAgent.Models.Enums;
 using LLMAgent.Modules.Logging;
-using LLMAgent.Modules.Parsing;
 using LLMAgent.Modules.Router;
 
 namespace LLMAgent.Modules.Agent.Middelwares;
@@ -24,8 +24,8 @@ public sealed class ValidationStep : IAgentMiddleware
         var chat = _router.GetChat(CognitiveRoutingType.Validation);
         chat.AddMessage($"Проверь по тексту следующий git-дифф:\n```diff\n{context.Diff}\n```");
 
-        var answer = await chat.GetAnswer(cancellationToken);
-        var findings = LlmJson.ParseFindings(answer, "Валидация");
+        var result = await chat.GetAnswer<AnalysisResult>(cancellationToken);
+        var findings = result?.ToFindings("Валидация") ?? [];
         context.Findings.AddRange(findings);
 
         _logger.Info("Этап валидации нашёл находок: {Count}", findings.Count);

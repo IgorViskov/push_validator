@@ -1,6 +1,6 @@
+using LLMAgent.Models;
 using LLMAgent.Models.Enums;
 using LLMAgent.Modules.Logging;
-using LLMAgent.Modules.Parsing;
 using LLMAgent.Modules.Router;
 
 namespace LLMAgent.Modules.Agent.Middelwares;
@@ -24,8 +24,8 @@ public sealed class OrchestrationStep : IAgentMiddleware
         var chat = _router.GetChat(CognitiveRoutingType.Orchestration);
         chat.AddMessage($"Git-дифф последних изменений:\n```diff\n{context.Diff}\n```");
 
-        var answer = await chat.GetAnswer(cancellationToken);
-        context.ComplexityScore = LlmJson.ParseComplexity(answer);
+        var result = await chat.GetAnswer<OrchestrationResult>(cancellationToken);
+        context.ComplexityScore = Math.Clamp(result?.ComplexityScore ?? 5, 1, 10);
 
         _logger.Info("Оркестратор оценил сложность изменений: {Score}/10", context.ComplexityScore);
 
