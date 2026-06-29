@@ -43,8 +43,6 @@ services.AddSingleton<IUserPermission, ConsoleUserPermission>();
 services.AddSingleton<RepoToolFactory>();
 services.AddSingleton<CognitiveRouter>();
 
-
-
 services.AddSingleton<AgentEngine>();
 services.AddSingleton<Agent>();
 services.AddMiddlewares();
