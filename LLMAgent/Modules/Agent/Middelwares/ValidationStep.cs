@@ -13,27 +13,39 @@ public sealed class ValidationStep : IAgentMiddleware
 {
     private readonly CognitiveRouter _router;
     private readonly Logger _logger;
+    private readonly AgentEngineDelegate _next; 
 
-    public ValidationStep(CognitiveRouter router, Logger logger)
+    public ValidationStep(AgentEngineDelegate next, CognitiveRouter router, Logger logger)
     {
         _router = router;
         _logger = logger;
+        _next = next;
     }
 
-    public async Task Run(AgentEngineDelegate? next, LlmContext context, CancellationToken cancellationToken)
+    public async Task Run(LlmContext context)
     {
         var chat = _router.GetChat(CognitiveRoutingType.Validation);
         chat.AddMessage(Prompt.ValidationRequestFor(context.Diff));
 
-        var result = await chat.GetAnswer<AnalysisResult>(cancellationToken);
-        var findings = result?.ToFindings("Валидация") ?? [];
+        AnalysisResult? result;
+        try
+        {
+            result = await chat.GetAnswer<AnalysisResult>(context.CancellationToken);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            _logger.Warn("Этап валидации: обращение к модели не удалось — {Error}.", e.Message);
+            result = null;
+        }
+
+        IReadOnlyList<Finding> findings = result is not null
+            ? result.ToFindings("Валидация")
+            : [new Finding(Severity.Critical, "Валидация",
+                "Этап валидации не дал разборчивого результата — пуш блокируется до ручной проверки.")];
         context.Findings.AddRange(findings);
 
-        _logger.Info("Этап валидации нашёл находок: {Count}", findings.Count);
+        _logger.Info("Этап валидации: находок {Count}.", findings.Count);
 
-        if (next is not null)
-        {
-            await next(null, context, cancellationToken);
-        }
+        await _next(context);
     }
 }

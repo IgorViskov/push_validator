@@ -1,6 +1,7 @@
 using LLMAgent.Models;
 using LLMAgent.Models.Enums;
 using LLMAgent.Modules.Chats;
+using LLMAgent.Modules.ErrorsModule;
 using LLMAgent.Modules.ErrorsModule.Exceptions;
 using LLMAgent.Modules.Logging;
 using LLMAgent.Prompts;
@@ -51,7 +52,7 @@ public sealed class CognitiveRouter
     {
         if (!_settings.TryGetValue(CognitiveRoutingType.Execution, out var candidates) || candidates.Length == 0)
         {
-            throw new NoChatException(CognitiveRoutingType.Execution);
+            Errors.Throw<NoChatException>(CognitiveRoutingType.Execution);
         }
 
         var ordered = candidates.OrderBy(m => m.CostEfficiency).ToArray();
@@ -69,7 +70,7 @@ public sealed class CognitiveRouter
         if (!_settings.TryGetValue(type, out var models) || models.Length == 0)
         {
             _logger.NoChats(type);
-            throw new NoChatException(type);
+            Errors.Throw<NoChatException>(type);
         }
 
         return models[0];

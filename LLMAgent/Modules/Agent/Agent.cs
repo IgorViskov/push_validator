@@ -1,3 +1,6 @@
+using LLMAgent.Modules.Agent.Middelwares;
+using LLMAgent.Modules.ErrorsModule;
+using LLMAgent.Modules.ErrorsModule.Exceptions;
 using LLMAgent.Modules.Git;
 using LLMAgent.Modules.Logging;
 
@@ -21,20 +24,15 @@ public sealed class Agent
     /// </summary>
     public async Task<int> Run(string repoPath, CancellationToken cancellationToken)
     {
-        if (!Directory.Exists(repoPath))
-        {
-            _logger.Warn("Путь к репозиторию не существует: {Path}", repoPath);
-            return 1;
-        }
+        EnsureDirectoryExist(repoPath);
+        await EnsureIsGitRepository(repoPath, cancellationToken);
 
-        if (!await _git.IsGitRepository(repoPath, cancellationToken))
+        var context = new LlmContext
         {
-            _logger.Warn("Каталог не является git-репозиторием: {Path}", repoPath);
-            return 1;
-        }
-
-        var context = new LlmContext { RepoPath = repoPath };
-        context.Diff = await _git.GetLatestChanges(repoPath, cancellationToken);
+            RepoPath = repoPath,
+            Diff = await _git.GetLatestChanges(repoPath, cancellationToken),
+            CancellationToken = cancellationToken
+        };
 
         if (string.IsNullOrWhiteSpace(context.Diff))
         {
@@ -42,7 +40,32 @@ public sealed class Agent
             return 0;
         }
 
-        await _engine.Run(context, cancellationToken);
+        await _engine
+            .Use<OrchestrationStep>()
+            .Use<ExecutionStep>()
+            .Use<ValidationStep>()
+            .Use<ReportStep>()
+            .Run(context);
+        
+        
         return context.AllowPush ? 0 : 1;
+    }
+
+    private void EnsureDirectoryExist(string path)
+    {
+        if (!Directory.Exists(path))
+        {
+            _logger.Warn("Путь к репозиторию не существует: {Path}", path);
+            Errors.Throw<ExitException>(1);
+        }
+    }
+    
+    private async Task EnsureIsGitRepository(string path, CancellationToken cancellationToken)
+    {
+        if (!await _git.IsGitRepository(path, cancellationToken))
+        {
+            _logger.Warn("Каталог не является git-репозиторием: {Path}", path);
+            Errors.Throw<ExitException>(1);
+        }
     }
 }

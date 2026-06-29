@@ -44,8 +44,9 @@ public sealed class Chat
     }
 
     /// <summary>
-    /// Свободный текстовый ответ с доступными инструментами. FunctionInvokingChatClient
-    /// сам выполняет вызовы инструментов и крутит цикл Reason→Act→Observe.
+    /// Свободный текстовый ответ. Сам цикл вызова инструментов (Act→Observe→повтор)
+    /// выполняет FunctionInvokingChatClient, подключённый в конструкторе через
+    /// UseFunctionInvocation(); здесь — единственный запрос, запускающий этот цикл.
     /// </summary>
     public async Task<string> GetAnswer(CancellationToken cancellationToken = default)
     {

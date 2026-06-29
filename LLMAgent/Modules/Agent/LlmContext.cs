@@ -26,4 +26,6 @@ public sealed class LlmContext
     public bool AllowPush { get; set; } = true;
 
     public bool HasCritical => Findings.Any(f => f.Severity == Severity.Critical);
+    
+    public CancellationToken CancellationToken { get; init;}
 }

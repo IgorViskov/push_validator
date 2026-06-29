@@ -2,5 +2,5 @@
 
 public interface IAgentMiddleware
 {
-    Task Run(AgentEngineDelegate? next, LlmContext context, CancellationToken cancellationToken);
+    Task Run(LlmContext context);
 }

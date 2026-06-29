@@ -8,7 +8,14 @@ namespace LLMAgent.Modules.Agent.Middelwares;
 /// </summary>
 public sealed class ReportStep : IAgentMiddleware
 {
-    public Task Run(AgentEngineDelegate? next, LlmContext context, CancellationToken cancellationToken)
+    private AgentEngineDelegate _next;
+    
+    public ReportStep(AgentEngineDelegate next)
+    {
+        _next = next;
+    }
+
+    public Task Run(LlmContext context)
     {
         Console.WriteLine();
         Console.WriteLine("════════════════ РЕЗУЛЬТАТ ПРОВЕРКИ КОММИТА ════════════════");
@@ -34,7 +41,7 @@ public sealed class ReportStep : IAgentMiddleware
         {
             context.AllowPush = true;
             Console.WriteLine("✅ Критических ошибок нет — пуш разрешён.");
-            return next is not null ? next(null, context, cancellationToken) : Task.CompletedTask;
+            return _next(context);
         }
 
         var criticalCount = context.Findings.Count(f => f.Severity == Severity.Critical);
@@ -50,7 +57,7 @@ public sealed class ReportStep : IAgentMiddleware
             ? "⚠️  Пуш разрешён пользователем вручную."
             : "⛔ Пуш отклонён.");
 
-        return next is not null ? next(null, context, cancellationToken) : Task.CompletedTask;
+        return _next(context);
     }
 
     private static string Icon(Severity severity) => severity switch

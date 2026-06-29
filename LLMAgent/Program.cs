@@ -1,6 +1,7 @@
 using LLMAgent.Models;
 using LLMAgent.Modules.Agent;
 using LLMAgent.Modules.Agent.Middelwares;
+using LLMAgent.Modules.ErrorsModule.Exceptions;
 using LLMAgent.Modules.Git;
 using LLMAgent.Modules.Logging;
 using LLMAgent.Modules.Router;
@@ -42,18 +43,15 @@ services.AddSingleton<IUserPermission, ConsoleUserPermission>();
 services.AddSingleton<RepoToolFactory>();
 services.AddSingleton<CognitiveRouter>();
 
-// Порядок регистрации = порядок шагов пайплайна.
-services.AddSingleton<IAgentMiddleware, OrchestrationStep>();
-services.AddSingleton<IAgentMiddleware, ExecutionStep>();
-services.AddSingleton<IAgentMiddleware, ValidationStep>();
-services.AddSingleton<IAgentMiddleware, ReportStep>();
+
 
 services.AddSingleton<AgentEngine>();
 services.AddSingleton<Agent>();
+services.AddMiddlewares();
 
 await using var provider = services.BuildServiceProvider();
 
-using var cts = new CancellationTokenSource();
+var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
@@ -70,6 +68,10 @@ catch (OperationCanceledException)
 {
     Console.Error.WriteLine("Проверка отменена.");
     return 1;
+}
+catch (ExitException e)
+{
+    return e.ExitCode;
 }
 catch (Exception ex)
 {

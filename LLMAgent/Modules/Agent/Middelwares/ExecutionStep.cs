@@ -1,3 +1,4 @@
+using LLMAgent.Extensions;
 using LLMAgent.Models;
 using LLMAgent.Modules.Logging;
 using LLMAgent.Modules.Router;
@@ -15,15 +16,17 @@ public sealed class ExecutionStep : IAgentMiddleware
     private readonly CognitiveRouter _router;
     private readonly RepoToolFactory _toolFactory;
     private readonly Logger _logger;
+    private readonly AgentEngineDelegate _next; 
 
-    public ExecutionStep(CognitiveRouter router, RepoToolFactory toolFactory, Logger logger)
+    public ExecutionStep(AgentEngineDelegate next, CognitiveRouter router, RepoToolFactory toolFactory, Logger logger)
     {
         _router = router;
         _toolFactory = toolFactory;
         _logger = logger;
+        _next = next;
     }
 
-    public async Task Run(AgentEngineDelegate? next, LlmContext context, CancellationToken cancellationToken)
+    public async Task Run(LlmContext context)
     {
         var (chat, model) = _router.GetExecutionChat(context.ComplexityScore);
         context.ExecutionModel = model;
@@ -35,21 +38,30 @@ public sealed class ExecutionStep : IAgentMiddleware
 
         chat.AddMessage(Prompt.ExecutionRequestFor(context.RepoPath, context.Diff));
 
-        // Фаза 1: рассуждение с инструментами (ReAct), свободный текст.
-        await chat.GetAnswer(cancellationToken);
+        AnalysisResult? result;
+        try
+        {
+            // Фаза 1: рассуждение с инструментами (ReAct), свободный текст.
+            await chat.GetAnswer(context.CancellationToken);
 
-        // Фаза 2: строго типизированное извлечение находок (без инструментов).
-        chat.AddMessage(Prompt.ExecutionSummaryRequest);
-        var result = await chat.GetAnswer<AnalysisResult>(cancellationToken);
+            // Фаза 2: строго типизированное извлечение находок (без инструментов).
+            chat.AddMessage(Prompt.ExecutionSummaryRequest);
+            result = await chat.GetAnswer<AnalysisResult>(context.CancellationToken);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            _logger.Warn("Этап анализа ({Model}): обращение к модели не удалось — {Error}.", model.Name, e.Message);
+            result = null;
+        }
 
-        var findings = result?.ToFindings("Анализ") ?? [];
+        IReadOnlyList<Finding> findings = result is not null
+            ? result.ToFindings("Анализ")
+            : [new Finding(Severity.Critical, "Анализ",
+                "Этап анализа не дал разборчивого результата — пуш блокируется до ручной проверки.")];
         context.Findings.AddRange(findings);
 
-        _logger.Info("Этап анализа ({Model}) нашёл находок: {Count}", model.Name, findings.Count);
+        _logger.Info("Этап анализа ({Model}): находок {Count}.", model.Name, findings.Count);
 
-        if (next is not null)
-        {
-            await next(null, context, cancellationToken);
-        }
+        await _next(context);
     }
 }

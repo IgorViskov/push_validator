@@ -1,29 +1,36 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace LLMAgent.Modules.Agent;
 
-public delegate Task AgentEngineDelegate(AgentEngineDelegate? next, LlmContext context, CancellationToken cancellationToken);
+public delegate Task AgentEngineDelegate(LlmContext context);
 
 public sealed class AgentEngine
 {
-    private readonly AgentEngineDelegate _pipeline;
+    private readonly IServiceProvider _services;
+    private readonly List<Func<AgentEngineDelegate, IAgentMiddleware>> _factories = [];
+    private AgentEngineDelegate? _pipeline;
 
-    public AgentEngine(IEnumerable<IAgentMiddleware> middlewares)
+    public AgentEngine(IServiceProvider services)
     {
-        var steps = middlewares
-            .Select<IAgentMiddleware, AgentEngineDelegate>(x => x.Run)
-            .ToList();
-
-        // Сворачиваем конвейер справа налево: каждый шаг получает реальное продолжение `next`.
-        AgentEngineDelegate pipeline = static (_, _, _) => Task.CompletedTask;
-        for (var i = steps.Count - 1; i >= 0; i--)
-        {
-            var current = steps[i];
-            var next = pipeline;
-            pipeline = (_, context, cancellationToken) => current(next, context, cancellationToken);
-        }
-
-        _pipeline = pipeline;
+        _services = services;
     }
 
-    public Task Run(LlmContext context, CancellationToken cancellationToken)
-        => _pipeline(null, context, cancellationToken);
+    public AgentEngine Use<TMiddleware>() where TMiddleware : IAgentMiddleware
+    {
+        Func<AgentEngineDelegate, TMiddleware> factory = _services.GetRequiredService<Func<AgentEngineDelegate, TMiddleware>>();
+        _factories.Add(x => factory(x));
+        return this;
+    }
+
+    public Task Run(LlmContext context)
+    {
+        _factories.Reverse();
+        _pipeline = _ => Task.CompletedTask;
+        foreach (var factory in _factories)
+        {
+            _pipeline = factory(_pipeline).Run;
+        }
+        
+        return _pipeline(context);
+    }
 }
