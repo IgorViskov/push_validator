@@ -44,18 +44,27 @@ public sealed class Chat
     }
 
     /// <summary>
-    /// Свободный текстовый ответ. Сам цикл вызова инструментов (Act→Observe→повтор)
-    /// выполняет FunctionInvokingChatClient, подключённый в конструкторе через
-    /// UseFunctionInvocation(); здесь — единственный запрос, запускающий этот цикл.
+    /// Свободный текстовый ответ, читаемый потоково. Сам цикл вызова инструментов
+    /// (Act→Observe→повтор) выполняет FunctionInvokingChatClient, подключённый в конструкторе
+    /// через UseFunctionInvocation(); здесь — единственный запрос, запускающий этот цикл.
+    /// Каждый фрагмент потока (рассуждения, текст, вызовы инструментов) отдаётся в onUpdate,
+    /// чтобы вызывающий код мог показывать, чем сейчас занята модель.
     /// </summary>
-    public async Task<string> GetAnswer(CancellationToken cancellationToken = default)
+    public async Task<string> GetAnswer(Action<ChatResponseUpdate>? onUpdate = null, CancellationToken cancellationToken = default)
     {
         var options = new ChatOptions
         {
             Tools = _tools.Count > 0 ? _tools : null
         };
 
-        var response = await _chatClient.GetResponseAsync(_messages, options, cancellationToken);
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var update in _chatClient.GetStreamingResponseAsync(_messages, options, cancellationToken))
+        {
+            updates.Add(update);
+            onUpdate?.Invoke(update);
+        }
+
+        var response = updates.ToChatResponse();
         _messages.AddMessages(response);
         return response.Text;
     }
