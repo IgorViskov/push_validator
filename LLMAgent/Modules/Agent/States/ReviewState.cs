@@ -3,6 +3,7 @@ using LLMAgent.Modules.Chats;
 using LLMAgent.Modules.Impact;
 using LLMAgent.Modules.Logging;
 using LLMAgent.Modules.Router;
+using LLMAgent.Modules.Safety;
 using LLMAgent.Modules.Tools;
 using LLMAgent.Prompts;
 using Microsoft.Extensions.Options;
@@ -17,6 +18,9 @@ public sealed class ReviewState : IAgentState
 {
     private readonly CognitiveRouter _router;
     private readonly RepoToolFactory _toolFactory;
+    private readonly ModelGate _gate;
+    private readonly FindingsGuard _findingsGuard;
+    private readonly RunMetrics _metrics;
     private readonly ImpactOptions _impact;
     private readonly Logger _logger;
 
@@ -25,11 +29,17 @@ public sealed class ReviewState : IAgentState
     public ReviewState(
         CognitiveRouter router,
         RepoToolFactory toolFactory,
+        ModelGate gate,
+        FindingsGuard findingsGuard,
+        RunMetrics metrics,
         IOptions<ImpactOptions> impact,
         Logger logger)
     {
         _router = router;
         _toolFactory = toolFactory;
+        _gate = gate;
+        _findingsGuard = findingsGuard;
+        _metrics = metrics;
         _impact = impact.Value;
         _logger = logger;
     }
@@ -59,28 +69,36 @@ public sealed class ReviewState : IAgentState
 
         var progress = new ChatActivityRenderer();
 
-        AnalysisResult? result;
-        try
-        {
-            // Фаза 1: рассуждение с инструментами (ReAct), свободный текст.
-            // Ответ читается потоково: рендерер печатает статусы — чем занята модель.
-            await chat.GetAnswer(progress.OnUpdate, context.CancellationToken);
-            progress.Complete();
+        // Фаза 1: рассуждение с инструментами (ReAct), свободный текст.
+        // Ответ читается потоково: рендерер печатает статусы — чем занята модель.
+        var reasoning = await _gate.Ask(Name, model, chat,
+            async ct => await chat.GetAnswer(progress.OnUpdate, ct), context.CancellationToken);
+        progress.Complete();
 
-            // Фаза 2: строго типизированное извлечение находок (без инструментов).
+        // Фаза 2: строго типизированное извлечение находок (без инструментов).
+        AnalysisResult? result = null;
+        if (reasoning is not null)
+        {
             chat.AddMessage(Prompt.ExecutionSummaryRequest);
-            result = await chat.GetAnswer<AnalysisResult>(context.CancellationToken);
-        }
-        catch (Exception e) when (e is not OperationCanceledException)
-        {
-            _logger.Warn("Этап анализа ({Model}): обращение к модели не удалось — {Error}.", model.Name, e.Message);
-            result = null;
+            result = await _gate.Ask($"{Name}:summary", model, chat,
+                ct => chat.GetAnswer<AnalysisResult>(ct), context.CancellationToken);
         }
 
-        IReadOnlyList<Finding> findings = result is not null
-            ? result.ToFindings(Stages.Review)
-            : [new Finding(Severity.Critical, Stages.Review,
-                "Этап анализа не дал разборчивого результата — пуш блокируется до ручной проверки.")];
+        IReadOnlyList<Finding> findings;
+        if (result is not null)
+        {
+            findings = _findingsGuard.Validate(Name, result.ToFindings(Stages.Review), context.RepoPath);
+        }
+        else
+        {
+            // Fail-closed: отсутствие разборчивого ответа — это не «замечаний нет».
+            _metrics.Degrade("этап анализа не дал разборчивого результата");
+            findings =
+            [
+                new Finding(Severity.Critical, Stages.Review,
+                    "Этап анализа не дал разборчивого результата — пуш блокируется до ручной проверки.")
+            ];
+        }
 
         // Именно замена, а не добавление: на второй проход состояние входит повторно,
         // и прошлые находки этого же этапа должны быть вытеснены.

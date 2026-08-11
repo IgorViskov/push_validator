@@ -3,6 +3,7 @@ using LLMAgent.Models.Enums;
 using LLMAgent.Modules.Impact;
 using LLMAgent.Modules.Logging;
 using LLMAgent.Modules.Router;
+using LLMAgent.Modules.Safety;
 using LLMAgent.Prompts;
 using Microsoft.Extensions.Options;
 
@@ -19,22 +20,34 @@ namespace LLMAgent.Modules.Agent.States;
 public sealed class ArbiterState : IAgentState
 {
     private readonly CognitiveRouter _router;
+    private readonly ModelGate _gate;
+    private readonly RunMetrics _metrics;
     private readonly ImpactOptions _impact;
     private readonly Logger _logger;
 
     public string Name => AgentStates.Arbiter;
 
-    public ArbiterState(CognitiveRouter router, IOptions<ImpactOptions> impact, Logger logger)
+    public ArbiterState(
+        CognitiveRouter router,
+        ModelGate gate,
+        RunMetrics metrics,
+        IOptions<ImpactOptions> impact,
+        Logger logger)
     {
         _router = router;
+        _gate = gate;
+        _metrics = metrics;
         _impact = impact.Value;
         _logger = logger;
     }
 
     public async Task<AgentTransition> Run(LlmContext context)
     {
+        // Находки предохранителей арбитражу не подлежат: их вынесла не модель, а проверка,
+        // и снимать их предложением из того же недоверенного текста — замкнутый круг.
         var disputed = context.Findings
             .Where(finding => finding.Severity == Severity.Critical)
+            .Where(finding => finding.Stage != Stages.Security)
             .ToList();
 
         // ── Ветвление: спорить не о чем ───────────────────────────────────────────────
@@ -46,31 +59,21 @@ public sealed class ArbiterState : IAgentState
 
         // Роль арбитра исполняет модель уровня Orchestration: это решение о решениях,
         // отдельной роли в конфиге для него заводить не пришлось.
-        var chat = _router.GetChat(CognitiveRoutingType.Orchestration, Prompt.Arbitration);
+        var (chat, model) = _router.GetChat(
+            CognitiveRoutingType.Orchestration, Prompt.WithTrustBoundary(Prompt.Arbitration));
         chat.AddMessage(Prompt.ArbitrationRequestFor(
             context.Diff,
             ImpactRenderer.Render(context.ImpactChunks, _impact.MaxContextChars),
             disputed));
 
-        ArbitrationResult? verdict = null;
-        try
-        {
-            verdict = await chat.GetAnswer<ArbitrationResult>(context.CancellationToken);
-
-            // Ответ пришёл, но не лёг в схему вердикта. Отличать этот случай от отказа
-            // модели важно: лечится он сменой модели роли, а не доступностью endpoint.
-            if (verdict is null)
-                _logger.Warn("Арбитр вернул неразборчивый ответ — модель роли Orchestration не держит структурный вывод.");
-        }
-        catch (Exception e) when (e is not OperationCanceledException)
-        {
-            _logger.Warn("Арбитр недоступен ({Error}).", e.Message);
-        }
+        var verdict = await _gate.Ask(Name, model, chat,
+            ct => chat.GetAnswer<ArbitrationResult>(ct), context.CancellationToken);
 
         if (verdict is null)
         {
             // Fail-closed: без вердикта критические находки остаются в силе.
             _logger.Warn("Арбитраж не состоялся — {Count} критических находок остаются в силе.", disputed.Count);
+            _metrics.Degrade("арбитраж не состоялся");
             return AgentTransition.To(AgentStates.Report, "арбитр не ответил — находки остаются в силе");
         }
 

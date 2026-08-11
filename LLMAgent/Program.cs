@@ -6,6 +6,7 @@ using LLMAgent.Modules.Git;
 using LLMAgent.Modules.Impact;
 using LLMAgent.Modules.Logging;
 using LLMAgent.Modules.Router;
+using LLMAgent.Modules.Safety;
 using LLMAgent.Modules.Tools;
 using LLmSeracher.Core;
 using LLmSeracher.Core.A2A;
@@ -53,6 +54,16 @@ services.Configure<ImpactOptions>(configuration.GetSection("Impact"));
 services.AddHttpAgentTransport();
 services.AddSingleton<DelegationService>();
 services.AddSingleton<ImpactService>();
+
+// Предохранители агентного цикла. Все — singleton с состоянием одного прогона:
+// процесс живёт ровно одну проверку коммита (см. AGENTS.md, «Известные ограничения»).
+services.Configure<GuardrailOptions>(configuration.GetSection("Guardrails"));
+services.AddSingleton<RunMetrics>();
+services.AddSingleton<RunGuard>();
+services.AddSingleton<ModelGate>();
+services.AddSingleton<FindingsGuard>();
+services.AddSingleton<ToolQuota>();
+services.AddSingleton<MetricsWriter>();
 
 services.AddSingleton<AgentEngine>();
 services.AddSingleton<Agent>();

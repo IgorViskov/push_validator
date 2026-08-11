@@ -1,6 +1,7 @@
 using LLMAgent.Models;
 using LLMAgent.Modules.Impact;
 using LLMAgent.Modules.Logging;
+using LLMAgent.Modules.Safety;
 
 namespace LLMAgent.Modules.Agent.States;
 
@@ -14,13 +15,15 @@ namespace LLMAgent.Modules.Agent.States;
 public sealed class ImpactState : IAgentState
 {
     private readonly ImpactService _impact;
+    private readonly RunMetrics _metrics;
     private readonly Logger _logger;
 
     public string Name => AgentStates.Impact;
 
-    public ImpactState(ImpactService impact, Logger logger)
+    public ImpactState(ImpactService impact, RunMetrics metrics, Logger logger)
     {
         _impact = impact;
+        _metrics = metrics;
         _logger = logger;
     }
 
@@ -41,6 +44,7 @@ public sealed class ImpactState : IAgentState
             // но проверка по диффу остаётся полноценной. Info-находка нужна, чтобы
             // «связей не найдено» в отчёте не путали с «граф молчит».
             _logger.Warn("Контекст влияния не получен ({Error}) — анализ пойдёт по одному диффу.", result.Error);
+            _metrics.Degrade($"контекст влияния не получен: {result.Error}");
             context.ReplaceFindings(Stages.Impact, [
                 new Finding(Severity.Info, Stages.Impact,
                     $"Граф кода не ответил ({result.Error}) — влияние изменений на вызывающий код не проверено.")

@@ -16,7 +16,8 @@ public sealed class CognitiveRouter
     public CognitiveRouter(IEnumerable<ApiSettings> apiSettings, Logger logger)
     {
         _logger = logger;
-        _settings = apiSettings
+
+        var configured = apiSettings
             .Select(x =>
             {
                 foreach (var model in x.Models)
@@ -27,6 +28,20 @@ public sealed class CognitiveRouter
                 return x;
             })
             .SelectMany(x => x.Models)
+            .ToArray();
+
+        // Модель без имени — обычно недозаполненная запись в конфиге или переменной
+        // окружения. Роутер её выберет наравне с остальными, а падение случится позже
+        // и в другом месте: клиент OpenAI не создаётся с пустым идентификатором модели.
+        var usable = configured.Where(m => !string.IsNullOrWhiteSpace(m.Name)).ToArray();
+
+        foreach (var broken in configured.Except(usable))
+        {
+            _logger.Warn("В конфигурации модель без имени (API {Api}, роль {Role}) — пропущена.",
+                broken.ApiSettings?.Name ?? "—", broken.Role);
+        }
+
+        _settings = usable
             .GroupBy(x => x.Role)
             .ToDictionary(
                 x => x.Key,
@@ -36,17 +51,21 @@ public sealed class CognitiveRouter
     }
 
     /// <summary>
-    /// Возвращает чат для роли, перебирая модели по приоритету до первой успешно созданной.
+    /// Возвращает чат для роли и саму модель: имя и цена нужны шлюзу обращений,
+    /// который считает расход и ведёт предохранитель по каждой модели отдельно.
     /// </summary>
-    public Chat GetChat(CognitiveRoutingType type) => GetChat(type, Prompt.For(type));
+    public (Chat Chat, ModelSetting Model) GetChat(CognitiveRoutingType type) => GetChat(type, Prompt.For(type));
 
     /// <summary>
     /// Чат для роли с нестандартным системным промптом. Нужен арбитру: по характеру задачи
     /// он ближе всего к Orchestration, но отдельной роли в конфиге под него не заводится —
     /// иначе каждый существующий appsettings.json пришлось бы дополнять новой моделью.
     /// </summary>
-    public Chat GetChat(CognitiveRoutingType type, string systemPrompt) =>
-        CreateChat(SelectModel(type), systemPrompt);
+    public (Chat Chat, ModelSetting Model) GetChat(CognitiveRoutingType type, string systemPrompt)
+    {
+        var model = SelectModel(type);
+        return (CreateChat(model, systemPrompt), model);
+    }
 
     /// <summary>
     /// Когнитивный роутинг Execution-модели: берём самую дешёвую модель,

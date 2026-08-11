@@ -1,5 +1,6 @@
 using LLMAgent.Models;
 using LLMAgent.Modules.Logging;
+using LLMAgent.Modules.Safety;
 using LLmSeracher.Core.A2A;
 using LLmSeracher.Core.Agents;
 using LLmSeracher.Core.Context;
@@ -28,17 +29,23 @@ public sealed class ImpactService
 {
     private readonly IAgentClient _agents;
     private readonly DelegationService _delegation;
+    private readonly RunGuard _guard;
+    private readonly RunMetrics _metrics;
     private readonly ImpactOptions _options;
     private readonly Logger _logger;
 
     public ImpactService(
         IAgentClient agents,
         DelegationService delegation,
+        RunGuard guard,
+        RunMetrics metrics,
         IOptions<ImpactOptions> options,
         Logger logger)
     {
         _agents = agents;
         _delegation = delegation;
+        _guard = guard;
+        _metrics = metrics;
         _options = options.Value;
         _logger = logger;
     }
@@ -54,14 +61,24 @@ public sealed class ImpactService
 
     public async Task<ImpactResult> Fetch(string query, string conversationId, CancellationToken cancellationToken)
     {
+        // Единственная точка выхода к чужим агентам — сюда же ставится потолок на число
+        // делегирований. Без него петля «арбитр просит контекст → анализ снова спрашивает
+        // граф» упирается только в терпение пользователя.
+        if (!_guard.CanDelegate(out var limit))
+        {
+            _metrics.AddGuardrailEvent("delegation-limit", $"задача retriever отменена — {limit}");
+            return ImpactResult.Unavailable(limit ?? "лимит делегирований исчерпан");
+        }
+
         var task = AgentTask.Create(Skills.ContextSearch, query, conversationId);
         task = task with
         {
             Delegation = _delegation.Issue(AgentIds.Retriever, task, Scopes.ContextRead)
         };
 
-        _logger.Info("Делегирование: retriever ← {Skill} [{Scope}] по запросу «{Query}»",
-            Skills.ContextSearch, Scopes.ContextRead, query);
+        _metrics.AddDelegation();
+        _logger.Info("Делегирование {Number}: retriever ← {Skill} [{Scope}] по запросу «{Query}»",
+            _metrics.Delegations, Skills.ContextSearch, Scopes.ContextRead, query);
 
         var chunks = new List<ContextChunk>();
         string? error = null;

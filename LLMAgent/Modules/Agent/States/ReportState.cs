@@ -1,4 +1,5 @@
 using LLMAgent.Models;
+using LLMAgent.Modules.Safety;
 
 namespace LLMAgent.Modules.Agent.States;
 
@@ -9,7 +10,14 @@ namespace LLMAgent.Modules.Agent.States;
 /// </summary>
 public sealed class ReportState : IAgentState
 {
+    private readonly RunMetrics _metrics;
+
     public string Name => AgentStates.Report;
+
+    public ReportState(RunMetrics metrics)
+    {
+        _metrics = metrics;
+    }
 
     public Task<AgentTransition> Run(LlmContext context)
     {
@@ -20,6 +28,7 @@ public sealed class ReportState : IAgentState
         Console.WriteLine($"Контекст влияния: {ImpactLabel(context)}");
         Console.WriteLine();
 
+        PrintMetrics();
         PrintRoute(context);
 
         if (context.Findings.Count == 0)
@@ -59,6 +68,54 @@ public sealed class ReportState : IAgentState
         return Task.FromResult(AgentTransition.Finish(
             context.AllowPush ? "пуш разрешён пользователем вручную" : "пуш отклонён"));
     }
+
+    /// <summary>
+    /// Три метрики прогона и сработавшие предохранители. Без них отчёт говорит только
+    /// о коммите, но ничего — о самом агенте: во что обошлась проверка и сколько раз
+    /// он споткнулся по дороге.
+    /// </summary>
+    private void PrintMetrics()
+    {
+        var usage = $"{_metrics.TotalTokens} токенов";
+        var cost = _metrics.CostUsd > 0 ? $"${_metrics.CostUsd:F4}, {usage}" : $"{usage}, цена не задана";
+
+        Console.WriteLine($"Результат прогона: {OutcomeLabel(_metrics.Outcome)}");
+        Console.WriteLine($"Время: {_metrics.Elapsed.TotalSeconds:F1} с   Стоимость: {cost}   " +
+                          $"Обращений к моделям: {_metrics.ModelCallCount}");
+
+        if (_metrics.AbortReason is { } abort)
+        {
+            Console.WriteLine($"Аварийная остановка: {abort}");
+        }
+
+        foreach (var degradation in _metrics.Degradations)
+        {
+            Console.WriteLine($"  · запасной путь: {degradation}");
+        }
+
+        if (_metrics.GuardrailEvents.Count > 0)
+        {
+            var byKind = _metrics.GuardrailEvents
+                .GroupBy(e => e.Kind)
+                .Select(g => $"{g.Key}×{g.Count()}");
+
+            Console.WriteLine($"Предохранители: {string.Join(", ", byKind)}");
+        }
+
+        if (_metrics.ToolCalls.Count > 0)
+        {
+            Console.WriteLine($"Инструменты: {string.Join(", ", _metrics.ToolCalls.Select(t => $"{t.Key}×{t.Value}"))}");
+        }
+
+        Console.WriteLine();
+    }
+
+    private static string OutcomeLabel(RunOutcome outcome) => outcome switch
+    {
+        RunOutcome.Success => "успех — все этапы отработали штатно",
+        RunOutcome.Degraded => "с деградацией — часть этапов работала на запасном пути",
+        _ => "остановлен предохранителем"
+    };
 
     /// <summary>
     /// Маршрут печатается всегда: по нему видно, какие ветки сработали в этом прогоне —

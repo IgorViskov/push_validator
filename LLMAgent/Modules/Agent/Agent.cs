@@ -2,6 +2,7 @@ using LLMAgent.Modules.ErrorsModule;
 using LLMAgent.Modules.ErrorsModule.Exceptions;
 using LLMAgent.Modules.Git;
 using LLMAgent.Modules.Logging;
+using LLMAgent.Modules.Safety;
 
 namespace LLMAgent.Modules.Agent;
 
@@ -9,12 +10,21 @@ public sealed class Agent
 {
     private readonly AgentEngine _engine;
     private readonly GitService _git;
+    private readonly RunMetrics _metrics;
+    private readonly MetricsWriter _metricsWriter;
     private readonly Logger _logger;
 
-    public Agent(AgentEngine engine, GitService git, Logger logger)
+    public Agent(
+        AgentEngine engine,
+        GitService git,
+        RunMetrics metrics,
+        MetricsWriter metricsWriter,
+        Logger logger)
     {
         _engine = engine;
         _git = git;
+        _metrics = metrics;
+        _metricsWriter = metricsWriter;
         _logger = logger;
     }
 
@@ -34,6 +44,9 @@ public sealed class Agent
             CancellationToken = cancellationToken
         };
 
+        _metrics.ConversationId = context.ConversationId;
+        _metrics.RepoPath = repoPath;
+
         if (string.IsNullOrWhiteSpace(context.Diff))
         {
             _logger.Info("Изменений для анализа не найдено — пуш разрешён.");
@@ -44,7 +57,16 @@ public sealed class Agent
         // влияния, арбитр — нужен ли второй проход. Здесь задаётся только точка входа.
         await _engine.Run(AgentStates.Triage, context);
 
-        return context.AllowPush ? 0 : 1;
+        var exitCode = context.AllowPush ? 0 : 1;
+
+        // Журнал пишется в самом конце: только здесь известен код выхода, а без него
+        // запись о прогоне не позволяет сопоставить метрики с реальным исходом.
+        if (_metricsWriter.Write(context, exitCode) is { } path)
+        {
+            _logger.Info("Журнал прогона: {Path}", path);
+        }
+
+        return exitCode;
     }
 
     private void EnsureDirectoryExist(string path)
