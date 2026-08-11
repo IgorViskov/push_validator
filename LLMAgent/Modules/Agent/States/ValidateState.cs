@@ -4,25 +4,27 @@ using LLMAgent.Modules.Logging;
 using LLMAgent.Modules.Router;
 using LLMAgent.Prompts;
 
-namespace LLMAgent.Modules.Agent.Middelwares;
+namespace LLMAgent.Modules.Agent.States;
 
 /// <summary>
-/// Шаг 3. Валидация: простые проверки по тексту — типы, соответствие аргументов, опечатки в именах.
+/// Шаг 4. Валидация: простые проверки по тексту — типы, соответствие аргументов, опечатки
+/// в именах. Выполняется отдельной моделью и не видит находок ревьюера: два независимых
+/// мнения нужны, чтобы арбитру было что сверять.
 /// </summary>
-public sealed class ValidationStep : IAgentMiddleware
+public sealed class ValidateState : IAgentState
 {
     private readonly CognitiveRouter _router;
     private readonly Logger _logger;
-    private readonly AgentEngineDelegate _next; 
 
-    public ValidationStep(AgentEngineDelegate next, CognitiveRouter router, Logger logger)
+    public string Name => AgentStates.Validate;
+
+    public ValidateState(CognitiveRouter router, Logger logger)
     {
         _router = router;
         _logger = logger;
-        _next = next;
     }
 
-    public async Task Run(LlmContext context)
+    public async Task<AgentTransition> Run(LlmContext context)
     {
         var chat = _router.GetChat(CognitiveRoutingType.Validation);
         chat.AddMessage(Prompt.ValidationRequestFor(context.Diff));
@@ -39,13 +41,14 @@ public sealed class ValidationStep : IAgentMiddleware
         }
 
         IReadOnlyList<Finding> findings = result is not null
-            ? result.ToFindings("Валидация")
-            : [new Finding(Severity.Critical, "Валидация",
+            ? result.ToFindings(Stages.Validate)
+            : [new Finding(Severity.Critical, Stages.Validate,
                 "Этап валидации не дал разборчивого результата — пуш блокируется до ручной проверки.")];
-        context.Findings.AddRange(findings);
+
+        context.ReplaceFindings(Stages.Validate, findings);
 
         _logger.Info("Этап валидации: находок {Count}.", findings.Count);
 
-        await _next(context);
+        return AgentTransition.To(AgentStates.Arbiter, "оба мнения собраны");
     }
 }

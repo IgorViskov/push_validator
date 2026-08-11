@@ -1,11 +1,14 @@
 using LLMAgent.Models;
 using LLMAgent.Modules.Agent;
-using LLMAgent.Modules.Agent.Middelwares;
+using LLMAgent.Modules.Agent.States;
 using LLMAgent.Modules.ErrorsModule.Exceptions;
 using LLMAgent.Modules.Git;
+using LLMAgent.Modules.Impact;
 using LLMAgent.Modules.Logging;
 using LLMAgent.Modules.Router;
 using LLMAgent.Modules.Tools;
+using LLmSeracher.Core;
+using LLmSeracher.Core.A2A;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -43,9 +46,17 @@ services.AddSingleton<IUserPermission, ConsoleUserPermission>();
 services.AddSingleton<RepoToolFactory>();
 services.AddSingleton<CognitiveRouter>();
 
+// Выход в сеть агентов LLmSeracher за контекстом влияния. Регистрируется только транспорт
+// и подпись полномочий: LLM-клиент и источники контекста у той сети свои, здесь они не нужны.
+services.Configure<A2AOptions>(configuration.GetSection("A2A"));
+services.Configure<ImpactOptions>(configuration.GetSection("Impact"));
+services.AddHttpAgentTransport();
+services.AddSingleton<DelegationService>();
+services.AddSingleton<ImpactService>();
+
 services.AddSingleton<AgentEngine>();
 services.AddSingleton<Agent>();
-services.AddMiddlewares();
+services.AddStates();
 
 await using var provider = services.BuildServiceProvider();
 

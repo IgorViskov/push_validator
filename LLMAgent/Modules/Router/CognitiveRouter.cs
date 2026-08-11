@@ -38,11 +38,15 @@ public sealed class CognitiveRouter
     /// <summary>
     /// Возвращает чат для роли, перебирая модели по приоритету до первой успешно созданной.
     /// </summary>
-    public Chat GetChat(CognitiveRoutingType type)
-    {
-        var model = SelectModel(type);
-        return CreateChat(model, Prompt.For(type));
-    }
+    public Chat GetChat(CognitiveRoutingType type) => GetChat(type, Prompt.For(type));
+
+    /// <summary>
+    /// Чат для роли с нестандартным системным промптом. Нужен арбитру: по характеру задачи
+    /// он ближе всего к Orchestration, но отдельной роли в конфиге под него не заводится —
+    /// иначе каждый существующий appsettings.json пришлось бы дополнять новой моделью.
+    /// </summary>
+    public Chat GetChat(CognitiveRoutingType type, string systemPrompt) =>
+        CreateChat(SelectModel(type), systemPrompt);
 
     /// <summary>
     /// Когнитивный роутинг Execution-модели: берём самую дешёвую модель,

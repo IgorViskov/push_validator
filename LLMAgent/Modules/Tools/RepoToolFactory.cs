@@ -1,7 +1,11 @@
 using System.ComponentModel;
 using System.Text;
+using LLMAgent.Models;
 using LLMAgent.Modules.Git;
+using LLMAgent.Modules.Impact;
+using LLmSeracher.Core.Context;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Options;
 
 namespace LLMAgent.Modules.Tools;
 
@@ -18,14 +22,33 @@ public sealed class RepoToolFactory
 
     private readonly GitService _git;
     private readonly IUserPermission _permission;
+    private readonly ImpactService _impact;
+    private readonly ImpactOptions _impactOptions;
 
-    public RepoToolFactory(GitService git, IUserPermission permission)
+    public RepoToolFactory(
+        GitService git,
+        IUserPermission permission,
+        ImpactService impact,
+        IOptions<ImpactOptions> impactOptions)
     {
         _git = git;
         _permission = permission;
+        _impact = impact;
+        _impactOptions = impactOptions.Value;
     }
 
-    public IReadOnlyList<AITool> Build(string repoPath)
+    /// <param name="repoPath">Корень анализируемого репозитория.</param>
+    /// <param name="conversationId">Сквозной идентификатор проверки — попадает в задачи чужим агентам.</param>
+    /// <param name="includeGraph">Давать ли инструмент обращения к графу кода.</param>
+    /// <param name="onGraphAnswer">
+    /// Куда отдать фрагменты, которые модель запросила у графа сама. Без этого канала
+    /// подключённый по инициативе модели контекст не виден ни отчёту, ни арбитру.
+    /// </param>
+    public IReadOnlyList<AITool> Build(
+        string repoPath,
+        string conversationId,
+        bool includeGraph,
+        Action<IReadOnlyList<ContextChunk>>? onGraphAnswer = null)
     {
         var repoFull = Path.GetFullPath(repoPath);
 
@@ -48,13 +71,46 @@ public sealed class RepoToolFactory
             name: "search_files",
             description: "Найти файлы по части имени. По умолчанию ищет в репозитории; для другой директории запрашивается разрешение.");
 
-        return [readFile, gitLog, searchFiles];
+        if (!includeGraph) return [readFile, gitLog, searchFiles];
+
+        // Инструмент уходит не в файловую систему, а в чужую сеть агентов: задачу выполняет
+        // владелец графа кода, а ревьюер лишь предъявляет полномочие context:read.
+        var graphImpact = AIFunctionFactory.Create(
+            ([Description("Имя типа или метода, например SearchAgent или ExecuteAsync")] string symbol,
+             CancellationToken ct)
+                => GraphImpact(symbol, conversationId, onGraphAnswer, ct),
+            name: "graph_impact",
+            description: "Спросить у графа кода, кто вызывает символ и что от него зависит. " +
+                         "Отвечает вызывающим кодом и связями, которых нет в диффе.");
+
+        return [readFile, gitLog, searchFiles, graphImpact];
+    }
+
+    private async Task<string> GraphImpact(
+        string symbol,
+        string conversationId,
+        Action<IReadOnlyList<ContextChunk>>? onGraphAnswer,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(symbol))
+        {
+            return "Не указано имя символа.";
+        }
+
+        var query = _impact.BuildQuery([symbol.Trim()], []);
+        var result = await _impact.Fetch(query, conversationId, ct);
+
+        if (!result.Available)
+        {
+            return $"Граф кода не ответил: {result.Error}. Проверяй вызывающий код через search_files/read_file.";
+        }
+
+        onGraphAnswer?.Invoke(result.Chunks);
+        return ImpactRenderer.Render(result.Chunks, _impactOptions.MaxContextChars);
     }
 
     private string ReadFile(string repoFull, string path)
     {
-        Console.Error.WriteLine($"🔧 function-call: read_file({path})");
-
         if (string.IsNullOrWhiteSpace(path))
         {
             return "Не указан путь к файлу.";
@@ -79,14 +135,11 @@ public sealed class RepoToolFactory
 
     private async Task<string> GitLog(string repoFull, int maxCount, CancellationToken ct)
     {
-        Console.Error.WriteLine($"🔧 function-call: git_log({maxCount})");
         return await _git.GetLog(repoFull, maxCount, ct);
     }
 
     private string SearchFiles(string repoFull, string pattern, string? directory)
     {
-        Console.Error.WriteLine($"🔧 function-call: search_files({pattern}, {directory})");
-
         if (string.IsNullOrWhiteSpace(pattern))
         {
             return "Не указан шаблон поиска.";

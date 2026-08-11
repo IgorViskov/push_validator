@@ -1,4 +1,3 @@
-using LLMAgent.Modules.Agent.Middelwares;
 using LLMAgent.Modules.ErrorsModule;
 using LLMAgent.Modules.ErrorsModule.Exceptions;
 using LLMAgent.Modules.Git;
@@ -20,7 +19,8 @@ public sealed class Agent
     }
 
     /// <summary>
-    /// Прогоняет проверку коммита. Возвращает код выхода: 0 — пуш разрешён, 1 — приостановлен.
+    /// Прогоняет проверку коммита по графу состояний. Возвращает код выхода:
+    /// 0 — пуш разрешён, 1 — приостановлен.
     /// </summary>
     public async Task<int> Run(string repoPath, CancellationToken cancellationToken)
     {
@@ -40,14 +40,10 @@ public sealed class Agent
             return 0;
         }
 
-        await _engine
-            .Use<OrchestrationStep>()
-            .Use<ExecutionStep>()
-            .Use<ValidationStep>()
-            .Use<ReportStep>()
-            .Run(context);
-        
-        
+        // Дальше маршрут выбирают сами состояния: triage решает, идти ли за контекстом
+        // влияния, арбитр — нужен ли второй проход. Здесь задаётся только точка входа.
+        await _engine.Run(AgentStates.Triage, context);
+
         return context.AllowPush ? 0 : 1;
     }
 
@@ -59,7 +55,7 @@ public sealed class Agent
             Errors.Throw<ExitException>(1);
         }
     }
-    
+
     private async Task EnsureIsGitRepository(string path, CancellationToken cancellationToken)
     {
         if (!await _git.IsGitRepository(path, cancellationToken))
