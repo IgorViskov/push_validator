@@ -24,5 +24,16 @@ public sealed class ModelSetting
     /// </summary>
     public double CostEfficiency { get; set; } = 1;
 
+    /// <summary>Цена за миллион входных токенов, USD. 0 — бесплатная или неизвестная модель.</summary>
+    public decimal PricePerMillionInput { get; set; }
+
+    /// <summary>Цена за миллион выходных токенов, USD.</summary>
+    public decimal PricePerMillionOutput { get; set; }
+
+    /// <summary>Стоимость обращения по факту израсходованных токенов.</summary>
+    public decimal CostOf(long inputTokens, long outputTokens) =>
+        inputTokens * PricePerMillionInput / 1_000_000m +
+        outputTokens * PricePerMillionOutput / 1_000_000m;
+
     public ApiSettings ApiSettings { get; set; } = null!;
 }

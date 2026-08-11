@@ -43,6 +43,15 @@ public sealed class Chat
         return this;
     }
 
+    /// <summary>Израсходовано входных токенов за всё время жизни чата.</summary>
+    public long InputTokens { get; private set; }
+
+    /// <summary>Израсходовано выходных токенов.</summary>
+    public long OutputTokens { get; private set; }
+
+    /// <summary>Пришёл ли расход от провайдера. false — значения оценены по длине текста.</summary>
+    public bool UsageReported { get; private set; } = true;
+
     /// <summary>
     /// Свободный текстовый ответ, читаемый потоково. Сам цикл вызова инструментов
     /// (Act→Observe→повтор) выполняет FunctionInvokingChatClient, подключённый в конструкторе
@@ -65,6 +74,7 @@ public sealed class Chat
         }
 
         var response = updates.ToChatResponse();
+        Track(response.Usage, response.Text);
         _messages.AddMessages(response);
         return response.Text;
     }
@@ -78,8 +88,28 @@ public sealed class Chat
     public async Task<T?> GetAnswer<T>(CancellationToken cancellationToken = default)
     {
         var response = await _chatClient.GetResponseAsync<T>(_messages, cancellationToken: cancellationToken);
+        Track(response.Usage, response.Text);
         _messages.AddMessages(response);
         return response.TryGetResult(out var result) ? result : default;
+    }
+
+    /// <summary>
+    /// Учёт расхода. Провайдер возвращает usage не всегда — в потоковом режиме это обычное
+    /// дело, — а бюджет прогона должен на что-то опираться. Поэтому при отсутствии данных
+    /// расход оценивается по длине текста (≈4 символа на токен) и помечается как оценка.
+    /// </summary>
+    private void Track(UsageDetails? usage, string answer)
+    {
+        if (usage?.InputTokenCount is { } input && usage.OutputTokenCount is { } output)
+        {
+            InputTokens += input;
+            OutputTokens += output;
+            return;
+        }
+
+        UsageReported = false;
+        InputTokens += _messages.Sum(m => m.Text?.Length ?? 0) / 4;
+        OutputTokens += answer.Length / 4;
     }
 
     private static OpenAIClient GetClient(ModelSetting setting)
