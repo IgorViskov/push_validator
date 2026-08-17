@@ -1,0 +1,23 @@
+@inherits LayoutComponentBase
+
+<div class="shell">
+    <header>
+        <div class="brand">
+            <span class="mark">RA</span>
+            <div>
+                <strong>ReviewAgent</strong>
+                <small>ревьюер, который решает судьбу пуша</small>
+            </div>
+        </div>
+        <nav>
+            <NavLink href="" Match="NavLinkMatch.All">Репозитории</NavLink>
+            <NavLink href="runs">Прогоны</NavLink>
+            <NavLink href="live">Живой лог</NavLink>
+            <NavLink href="settings">Настройки</NavLink>
+        </nav>
+    </header>
+
+    <main>
+        @Body
+    </main>
+</div>

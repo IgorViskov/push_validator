@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <UserSecretsId>review-agent</UserSecretsId>
+    <RootNamespace>ReviewAgent.Web</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ReviewAgent.Data\ReviewAgent.Data.csproj" />
+  </ItemGroup>
+
+</Project>

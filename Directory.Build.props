@@ -1,0 +1,26 @@
+<Project>
+
+  <!-- Общие свойства всех проектов решения: версия платформы задаётся один раз,
+       иначе она расходится по csproj при добавлении нового проекта. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <!-- В сборке участвует Roslyn: он тянет за собой сборки MSBuild, часть которых
+         помечена устаревшей. Ошибками это делать нельзя — код чужой. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>NU1701</WarningsNotAsErrors>
+
+    <!-- Диагностика внутри контейнера: без символов стек падения бесполезен. -->
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Product>ReviewAgent</Product>
+    <Company>ReviewAgent</Company>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+</Project>

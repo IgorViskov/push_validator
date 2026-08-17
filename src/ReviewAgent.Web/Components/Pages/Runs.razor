@@ -1,0 +1,105 @@
+@page "/runs"
+@inject ReviewJournal Journal
+
+<PageTitle>Прогоны — ReviewAgent</PageTitle>
+
+<h1>История прогонов</h1>
+<p class="lead">
+    Три метрики, по которым прогоны сравниваются между собой: исход, время и стоимость.
+    Без них об агенте можно судить только по последнему вердикту.
+</p>
+
+@if (_runs is null)
+{
+    <div class="panel"><p class="muted" style="margin:0">Загрузка…</p></div>
+}
+else if (_runs.Count == 0)
+{
+    <div class="panel">
+        <p class="muted" style="margin:0">
+            Прогонов пока не было. Сделайте <code>git push</code> в обслуживаемом репозитории
+            или запустите проверку из карточки репозитория.
+        </p>
+    </div>
+}
+else
+{
+    <div class="panel">
+        <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+            <div class="stat"><b>@_runs.Count</b><span>прогонов в журнале</span></div>
+            <div class="stat"><b>@_runs.Count(r => r.Decision == "Blocked")</b><span>пушей остановлено</span></div>
+            <div class="stat"><b>@_runs.Sum(r => r.CriticalCount)</b><span>критических находок</span></div>
+            <div class="stat"><b>@_runs.Count(r => r.Outcome == "Degraded")</b><span>с деградацией</span></div>
+            <div class="stat"><b>@_runs.Count(r => r.Outcome == "Aborted")</b><span>остановлено предохранителем</span></div>
+            <div class="stat">
+                <b>@($"{_runs.Average(r => r.DurationMs) / 1000:0.0} с")</b>
+                <span>среднее время</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel table-scroll">
+        <table>
+            <thead>
+            <tr>
+                <th>Когда</th>
+                <th>Репозиторий</th>
+                <th>Ветка</th>
+                <th>Вердикт</th>
+                <th>Исход</th>
+                <th class="num">Слож.</th>
+                <th>Модель</th>
+                <th class="num">Находки</th>
+                <th class="num">Крит.</th>
+                <th class="num">Время</th>
+                <th class="num">Токены</th>
+                <th></th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var run in _runs)
+            {
+                <tr>
+                    <td class="small">@run.StartedAt.ToString("dd.MM HH:mm:ss")</td>
+                    <td>@(run.Repository?.Name ?? "—")</td>
+                    <td class="small mono">@(run.Branch ?? "—")</td>
+                    <td>
+                        <span class="badge @(run.Decision == "Allowed" ? "ok" : "crit")">
+                            @(run.Decision == "Allowed" ? "пуш разрешён" : "остановлен")
+                        </span>
+                    </td>
+                    <td><span class="badge @OutcomeClass(run.Outcome)">@OutcomeLabel(run.Outcome)</span></td>
+                    <td class="num">@run.Complexity</td>
+                    <td class="small mono">@(run.ExecutionModel ?? "—")</td>
+                    <td class="num">@run.FindingCount</td>
+                    <td class="num">@(run.CriticalCount > 0 ? run.CriticalCount.ToString() : "—")</td>
+                    <td class="num">@($"{run.DurationMs / 1000.0:0.0} с")</td>
+                    <td class="num">@(run.InputTokens + run.OutputTokens)</td>
+                    <td><a class="btn small" href="runs/@run.Id">Разбор</a></td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<ReviewRunRecord>? _runs;
+
+    protected override async Task OnInitializedAsync() =>
+        _runs = await Journal.RecentAsync(100, CancellationToken.None);
+
+    private static string OutcomeLabel(string outcome) => outcome switch
+    {
+        "Success" => "успех",
+        "Degraded" => "деградация",
+        _ => "остановлен"
+    };
+
+    private static string OutcomeClass(string outcome) => outcome switch
+    {
+        "Success" => "ok",
+        "Degraded" => "warn",
+        _ => "crit"
+    };
+}

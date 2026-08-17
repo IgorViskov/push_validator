@@ -1,0 +1,157 @@
+# ReviewAgent — предпушевой ревьюер с графом кода.
+#
+#   cp .env.example .env      настроить порт, путь к репозиториям и модели
+#   docker compose up -d      поднять агента и графовую базу
+#   docker compose logs -f agent
+#
+# Админка: http://localhost:${AGENT_PORT}
+#
+# Все настройки задаются здесь и в .env. Двойное подчёркивание в имени переменной —
+# разделитель уровней конфигурации: Llm__Providers__0__Endpoint читается приложением
+# как Llm:Providers:0:Endpoint.
+
+name: review-agent
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: review-agent:latest
+    # Имя фиксировано: его подставляет в хук команда автозапуска (docker start review-agent).
+    container_name: review-agent
+    restart: unless-stopped
+
+    ports:
+      - "${AGENT_PORT:-8080}:8080"
+
+    environment:
+      ASPNETCORE_HTTP_PORTS: "8080"
+      DOTNET_ENVIRONMENT: "${DOTNET_ENVIRONMENT:-Production}"
+      Logging__LogLevel__Default: "${LOG_LEVEL:-Information}"
+
+      # ── Реестр и журнал ─────────────────────────────────────────────────────────
+      Storage__DatabasePath: "/app/data/review-agent.db"
+      Storage__KeepRunsPerRepository: "${KEEP_RUNS:-200}"
+
+      # ── Графовая база ───────────────────────────────────────────────────────────
+      Graph__Uri: "bolt://graph:7687"
+      Graph__User: "neo4j"
+      Graph__Password: "${GRAPH_PASSWORD:-review-agent-local}"
+      Graph__Database: "neo4j"
+
+      # ── Контекст влияния ────────────────────────────────────────────────────────
+      Impact__Enabled: "${IMPACT_ENABLED:-true}"
+      Impact__RefreshGraphBeforeReview: "${IMPACT_REFRESH:-true}"
+      Impact__ComplexityThreshold: "${IMPACT_THRESHOLD:-3}"
+      Impact__MaxChunks: "${IMPACT_MAX_CHUNKS:-10}"
+      Impact__MaxContextChars: "${IMPACT_MAX_CHARS:-6000}"
+      Impact__MaxArbiterRetries: "${IMPACT_ARBITER_RETRIES:-1}"
+
+      # ── Хук pre-push ────────────────────────────────────────────────────────────
+      # PublicUrl — адрес агента с точки зрения машины разработчика, не изнутри сети compose.
+      Hook__PublicUrl: "${HOOK_PUBLIC_URL:-http://localhost:8080}"
+      Hook__AutostartCommand: "${HOOK_AUTOSTART:-docker start review-agent}"
+      Hook__StartupWaitSeconds: "${HOOK_STARTUP_WAIT:-90}"
+      Hook__ReviewTimeoutSeconds: "${HOOK_TIMEOUT:-1200}"
+      Hook__OnUnavailable: "${HOOK_ON_UNAVAILABLE:-allow}"
+      Hook__AllowForceOverride: "${HOOK_ALLOW_FORCE:-true}"
+
+      # ── Предохранители ──────────────────────────────────────────────────────────
+      Guardrails__Budget__MaxCostUsd: "${MAX_COST_USD:-0}"
+      Guardrails__Budget__MaxTokens: "${MAX_TOKENS:-400000}"
+      Guardrails__Budget__MaxDurationSeconds: "${MAX_DURATION_SECONDS:-1200}"
+      Guardrails__Budget__MaxModelCalls: "${MAX_MODEL_CALLS:-12}"
+      Guardrails__Budget__MaxGraphQueries: "${MAX_GRAPH_QUERIES:-8}"
+      Guardrails__Retry__MaxAttempts: "${RETRY_ATTEMPTS:-2}"
+      Guardrails__CircuitBreaker__FailureThreshold: "${BREAKER_THRESHOLD:-2}"
+      Guardrails__Tools__ReadFile: "${TOOL_READ_FILE:-25}"
+      Guardrails__Tools__SearchFiles: "${TOOL_SEARCH_FILES:-15}"
+      Guardrails__Tools__GitLog: "${TOOL_GIT_LOG:-3}"
+      Guardrails__Tools__GraphImpact: "${TOOL_GRAPH_IMPACT:-5}"
+      Guardrails__Tools__MaxReActIterations: "${TOOL_MAX_REACT:-6}"
+      Guardrails__Tools__MaxTotalToolCalls: "${TOOL_MAX_TOTAL:-60}"
+      Guardrails__Tools__AllowOutsideRepository: "${TOOL_ALLOW_OUTSIDE:-false}"
+
+      # ── Модели ──────────────────────────────────────────────────────────────────
+      # host.docker.internal — так контейнер достаёт LM Studio, поднятую на хосте.
+      Llm__Providers__0__Name: "${LLM_NAME:-LM Studio}"
+      Llm__Providers__0__Endpoint: "${LLM_ENDPOINT:-http://host.docker.internal:1234/v1}"
+      Llm__Providers__0__ApiKey: "${LLM_API_KEY:-}"
+      Llm__Providers__0__TimeoutSeconds: "${LLM_TIMEOUT:-900}"
+
+      Llm__Providers__0__Models__0__Name: "${MODEL_ORCHESTRATION:-zai-org/glm-4.6v-flash}"
+      Llm__Providers__0__Models__0__Role: "Orchestration"
+      Llm__Providers__0__Models__0__Priority: "10"
+      Llm__Providers__0__Models__0__CostEfficiency: "5"
+
+      Llm__Providers__0__Models__1__Name: "${MODEL_EXECUTION_CHEAP:-openai/gpt-oss-20b}"
+      Llm__Providers__0__Models__1__Role: "Execution"
+      Llm__Providers__0__Models__1__Priority: "5"
+      Llm__Providers__0__Models__1__CostEfficiency: "2"
+
+      Llm__Providers__0__Models__2__Name: "${MODEL_EXECUTION:-qwen3-coder-30b-a3b-instruct}"
+      Llm__Providers__0__Models__2__Role: "Execution"
+      Llm__Providers__0__Models__2__Priority: "10"
+      Llm__Providers__0__Models__2__CostEfficiency: "8"
+
+      Llm__Providers__0__Models__3__Name: "${MODEL_VALIDATION:-openai/gpt-oss-20b}"
+      Llm__Providers__0__Models__3__Role: "Validation"
+      Llm__Providers__0__Models__3__Priority: "10"
+      Llm__Providers__0__Models__3__CostEfficiency: "3"
+      Llm__Providers__0__Models__3__SupportsTools: "false"
+
+    volumes:
+      # Реестр репозиториев и журнал прогонов — том, а не каталог образа.
+      - agent-data:/app/data
+
+      # Обслуживаемые репозитории. Агенту нужен доступ к рабочему дереву: он читает файлы
+      # для анализа, разбирает решение Roslyn'ом и записывает файл хука. Внутри контейнера
+      # путь всегда /repos/<имя> — именно его и указывают в админке.
+      - "${REPOS_ROOT:-./samples}:/repos"
+
+    extra_hosts:
+      # Linux-хост без Docker Desktop не подставляет host.docker.internal сам.
+      - "host.docker.internal:host-gateway"
+
+    depends_on:
+      graph:
+        condition: service_healthy
+
+  graph:
+    # Графовая база вынесена в отдельный контейнер, а не встроена в агента: это состояние,
+    # которое должно переживать пересборку образа, и полноценный движок обхода, который
+    # не пишут заново ради одного контейнера. Разбор выбора — docs/DECISIONS.md.
+    image: neo4j:2026.06-community
+    container_name: review-agent-graph
+    restart: unless-stopped
+
+    ports:
+      # Браузер графа: пригодится в демонстрации, чтобы показать граф глазами.
+      - "${GRAPH_HTTP_PORT:-7474}:7474"
+      - "${GRAPH_BOLT_PORT:-7687}:7687"
+
+    environment:
+      NEO4J_AUTH: "neo4j/${GRAPH_PASSWORD:-review-agent-local}"
+      # Граф одного репозитория целиком помещается в память — обходы идут без обращения к диску.
+      NEO4J_server_memory_heap_initial__size: "${GRAPH_HEAP_MIN:-1G}"
+      NEO4J_server_memory_heap_max__size: "${GRAPH_HEAP_MAX:-2G}"
+      NEO4J_server_memory_pagecache_size: "${GRAPH_PAGECACHE:-1G}"
+      NEO4J_db_transaction_timeout: "120s"
+
+    volumes:
+      - graph-data:/data
+      - graph-logs:/logs
+
+    healthcheck:
+      # Порт открывается раньше, чем база готова принимать Cypher, — проверяем именно запросом.
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p ${GRAPH_PASSWORD:-review-agent-local} 'RETURN 1' || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+volumes:
+  agent-data:
+  graph-data:
+  graph-logs:
