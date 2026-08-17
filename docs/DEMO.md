@@ -19,6 +19,15 @@ LLM_ENDPOINT=http://host.docker.internal:1234/v1
 LLM_API_KEY=<токен LM Studio, если аутентификация включена>
 ```
 
+**Проверьте, что порт свободен.** По умолчанию админка занимает 8080, а он часто занят
+чем-нибудь своим. Если занят — поменяйте `AGENT_PORT` и `HOOK_PUBLIC_URL` согласованно
+(порт вписан в текст хука, поэтому после смены хук надо переустановить из админки):
+
+```ini
+AGENT_PORT=8099
+HOOK_PUBLIC_URL=http://localhost:8099
+```
+
 Подготовить демонстрационный репозиторий и локальный «сервер» для пушей:
 
 ```bash
@@ -45,7 +54,7 @@ REVIEW_AGENT_FORCE=1 git push --force origin HEAD:main
 Открыть три окна: терминал в `shop-demo`, браузер с админкой, браузер с графом
 (<http://localhost:7474>).
 
-Проверить перед началом: `curl http://localhost:8080/api/ready` отвечает
+Проверить перед началом: `curl http://localhost:$AGENT_PORT/api/ready` отвечает
 `{"status":"ok","graph":"available","sdk":"ready"}`.
 
 ---

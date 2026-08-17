@@ -65,7 +65,9 @@ cp .env.example .env
 docker compose up -d
 ```
 
-Админка — <http://localhost:8080> (порт задаётся `AGENT_PORT`).
+Админка — <http://localhost:8080>; порт задаётся `AGENT_PORT`. Если 8080 занят, меняйте
+`AGENT_PORT` и `HOOK_PUBLIC_URL` вместе: адрес агента вписывается в текст хука, и после
+смены порта хук нужно переустановить из админки.
 
 Дальше в админке: указать путь к репозиторию **так, как его видит агент**. Каталог хоста
 `C:/Projects/my-app` при `REPOS_ROOT=C:/Projects` виден агенту как `/repos/my-app` —
