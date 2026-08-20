@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Демо №2: тихая логическая ошибка внутри одного метода.
 
@@ -22,11 +22,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Сравнение с нормализацией переводов строк. Без неё скрипт ломается на Windows:
-# git отдаёт файл с CRLF (core.autocrlf), а текст в этом скрипте хранится с LF,
-# и подстрока просто не находится — при полностью исправном файле.
+# Чтение и запись через .NET, а не Get-Content/Set-Content. Причин две, и обе про
+# Windows PowerShell 5.1, где умолчания отличаются от pwsh 7:
+#
+#   кодировка — Get-Content без -Encoding читает файл как ANSI, и кириллица в исходниках
+#               превращается в мусор; сравнение с текстом скрипта не находит совпадения
+#               при полностью исправном файле;
+#   переводы строк — git отдаёт файл с CRLF (core.autocrlf), а текст в этом скрипте
+#               хранится с LF, поэтому обе стороны сравнения приводятся к LF.
 function Get-NormalizedContent([string]$Path) {
-    return (Get-Content $Path -Raw).Replace("`r`n", "`n")
+    $utf8 = [System.Text.UTF8Encoding]::new($false)
+    return [System.IO.File]::ReadAllText($Path, $utf8).Replace("`r`n", "`n")
 }
 
 function Set-NormalizedContent([string]$Path, [string]$Content) {

@@ -31,7 +31,15 @@ HOOK_PUBLIC_URL=http://localhost:8099
 Подготовить демонстрационный репозиторий и локальный «сервер» для пушей:
 
 ```bash
-./samples/demo/bootstrap.ps1 -Target C:/Projects/demo-workspace
+./samples/demo/bootstrap.sh C:/Projects/demo-workspace
+```
+
+Скрипты продублированы на `sh` и на PowerShell. **Основной путь — `sh`**: он запускается
+из Git Bash без настройки, тогда как PowerShell по умолчанию отказывается исполнять файлы
+сценариев. Если предпочитаете PowerShell, запускайте через ключ, не меняя настроек системы:
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File .\samples\demo\bootstrap.ps1 -Target C:/Projects/demo-workspace
 ```
 
 ```bash
@@ -45,7 +53,10 @@ docker compose up -d
 ```bash
 cd C:/Projects/demo-workspace/shop-demo
 REVIEW_AGENT_FORCE=1 git push --force origin HEAD:main
-./samples/demo/reset.ps1 -Repo C:/Projects/demo-workspace/shop-demo
+```
+
+```bash
+./samples/demo/reset.sh C:/Projects/demo-workspace/shop-demo
 ```
 
 Если памяти достаточно, выключите в LM Studio выгрузку предыдущей модели — прогон станет
@@ -81,7 +92,7 @@ REVIEW_AGENT_FORCE=1 git push --force origin HEAD:main
 
 ```bash
 cd C:/Projects/demo-workspace/shop-demo
-./../../LLMAgent/samples/demo/change-01-breaking-signature.ps1 -Repo .
+~/…/LLMAgent/samples/demo/change.sh 01 .
 git diff
 ```
 
@@ -224,8 +235,8 @@ REVIEW_AGENT_FORCE=1 git push
 ## 12:00–15:00 · Сценарий 2: попытка договориться с ревьюером
 
 ```bash
-./../../LLMAgent/samples/demo/reset.ps1 -Repo .
-./../../LLMAgent/samples/demo/change-03-injection.ps1 -Repo .
+~/…/LLMAgent/samples/demo/reset.sh .
+~/…/LLMAgent/samples/demo/change.sh 03 .
 git diff
 ```
 
@@ -352,8 +363,8 @@ git add -A && git commit -m "Пометка о ручной проверке ф�
 не при чём и работать должна модель.
 
 ```bash
-./../../LLMAgent/samples/demo/reset.ps1 -Repo .
-./../../LLMAgent/samples/demo/change-02-discount-cap.ps1 -Repo .
+~/…/LLMAgent/samples/demo/reset.sh .
+~/…/LLMAgent/samples/demo/change.sh 02 .
 git add -A && git commit -m "Снять потолок скидки" && git push
 ```
 
@@ -376,3 +387,5 @@ git add -A && git commit -m "Снять потолок скидки" && git push
 | прогон длится минуты | LM Studio выгружает модели между этапами; сделать прогревочный пуш или отключить выгрузку |
 | `роли без модели` в настройках | имена моделей в `.env` не совпадают с `GET /v1/models` сервера |
 | проверка не запускается, «репозиторий не обслуживается» | репозиторий удалён из реестра, а хук остался; снять хук вручную или подключить репозиторий заново |
+| `выполнение сценариев отключено в этой системе` | PowerShell с политикой по умолчанию не запускает `.ps1`; используйте версии на `sh` либо ключ `-ExecutionPolicy Bypass -File` |
+| `.ps1` печатает кракозябры или падает на разборе | скрипт прочитан как ANSI; файлы сохранены в UTF-8 с BOM именно поэтому — проверьте, что редактор его не срезал |
