@@ -9,6 +9,9 @@
 
 Write-Host 'Демонстрационные сценарии ReviewAgent' -ForegroundColor Cyan
 Write-Host ''
+Write-Host '  demo run [каталог]           весь рабочий путь целиком: скрипт делает всё сам,' -ForegroundColor White
+Write-Host '                               от вас — Enter между шагами' -ForegroundColor White
+Write-Host ''
 Write-Host '  demo bootstrap [каталог]     подготовить демонстрационный репозиторий'
 Write-Host '                               по умолчанию — demo-workspace рядом с корнем'
 Write-Host ''
@@ -21,7 +24,10 @@ Write-Host '                               проверка границы до�
 Write-Host ''
 Write-Host '  demo reset <репозиторий>     откатить к состоянию последнего пуша'
 Write-Host ''
-Write-Host 'Пример:' -ForegroundColor Cyan
+Write-Host 'Проще всего:' -ForegroundColor Cyan
+Write-Host '  demo run'
+Write-Host ''
+Write-Host 'По шагам вручную:' -ForegroundColor Cyan
 Write-Host '  demo bootstrap C:/Projects/demo-workspace'
 Write-Host '  demo 01 C:/Projects/demo-workspace/shop-demo'
 Write-Host '  cd C:/Projects/demo-workspace/shop-demo'

@@ -10,6 +10,7 @@ rem This file is intentionally ASCII-only. The cmd console runs an OEM codepage 
 rem Russian Windows), and UTF-8 Cyrillic echoed from here would come out as garbage.
 rem All human-facing text is printed by the .ps1 scripts, which handle encoding correctly.
 rem
+rem   demo run [dir]            guided walkthrough: does everything, you press Enter
 rem   demo bootstrap [dir]      prepare the demo repository
 rem   demo 01 <repo>            broken public contract
 rem   demo 02 <repo>            discount cap removed
@@ -21,6 +22,11 @@ set "HERE=%~dp0"
 set "PS=powershell -NoProfile -ExecutionPolicy Bypass"
 
 if "%~1"=="" goto :usage
+
+if /i "%~1"=="run" (
+    if "%~2"=="" ( %PS% -File "%HERE%demo-run.ps1" ) else ( %PS% -File "%HERE%demo-run.ps1" -Workspace "%~2" )
+    goto :done
+)
 
 if /i "%~1"=="bootstrap" (
     if "%~2"=="" ( %PS% -File "%HERE%bootstrap.ps1" ) else ( %PS% -File "%HERE%bootstrap.ps1" -Target "%~2" )

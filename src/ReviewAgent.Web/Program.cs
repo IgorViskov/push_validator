@@ -21,6 +21,7 @@ builder.Services.AddAgentStorage(builder.Configuration);
 builder.Services.AddSingleton<RunActivityBus>();
 builder.Services.AddSingleton<ReviewOrchestrator>();
 builder.Services.AddSingleton<IndexingQueue>();
+builder.Services.AddScoped<RepositoryProvisioning>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<IndexingQueue>());
 
 var app = builder.Build();
@@ -36,6 +37,7 @@ app.MapStaticAssets();
 app.UseAntiforgery();
 
 app.MapReviewApi();
+app.MapRepositoryApi();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
 app.Run();

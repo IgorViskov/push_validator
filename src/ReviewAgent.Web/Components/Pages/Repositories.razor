@@ -1,5 +1,6 @@
 @page "/"
 @inject RepositoryRegistry Registry
+@inject RepositoryProvisioning Provisioning
 @inject GitHookInstaller Hooks
 @inject IndexingQueue Indexing
 @inject IGraphStore Graph
@@ -210,33 +211,17 @@ else
         _busy = true;
         try
         {
-            var result = await Registry.AddAsync(_newPath, _newName, _newSolution, CancellationToken.None);
-            if (!result.Ok || result.Repository is null)
+            // Тот же сервис, что и за HTTP-API: подключение — это три связанных действия
+            // (реестр, хук, индексация), и две реализации рано или поздно разъехались бы.
+            var result = await Provisioning.ConnectAsync(
+                _newPath, _newName, _newSolution, overwriteForeignHook: false, CancellationToken.None);
+
+            if (result.Repository is not null)
             {
-                Show(result.Error ?? "Не удалось подключить репозиторий.", ok: false);
-                return;
+                _newPath = _newName = _newSolution = string.Empty;
             }
 
-            var repository = result.Repository;
-
-            // Хук ставим сразу: подключение без хука не даёт ничего — пуш всё равно
-            // пройдёт мимо агента, и пользователь узнает об этом не сразу.
-            var hook = await Hooks.InstallAsync(
-                repository.Path, repository.Key, repository.Token, overwriteForeign: false,
-                CancellationToken.None);
-
-            repository.HookInstalled = hook.Ok;
-            repository.HookInstalledAt = hook.Ok ? DateTimeOffset.Now : null;
-            await Registry.SaveAsync(CancellationToken.None);
-
-            Indexing.Enqueue(repository);
-
-            _newPath = _newName = _newSolution = string.Empty;
-            Show(hook.Ok
-                ? $"Репозиторий {repository.Name} подключён, хук установлен, индексация запущена."
-                : $"Репозиторий {repository.Name} подключён, индексация запущена. Хук: {hook.Message}",
-                ok: hook.Ok);
-
+            Show(result.Message, result.Ok);
             await Reload();
         }
         finally
@@ -292,25 +277,8 @@ else
         _busy = true;
         try
         {
-            var hook = await Hooks.RemoveAsync(repository.Path, CancellationToken.None);
-
-            var graphCleared = true;
-            try
-            {
-                await Graph.ResetAsync(repository.Key, CancellationToken.None);
-            }
-            catch (Exception)
-            {
-                graphCleared = false;
-            }
-
-            await Registry.RemoveAsync(repository, CancellationToken.None);
-
-            var notes = new List<string> { $"{repository.Name} исключён из обслуживания." };
-            if (!hook.Ok) notes.Add($"Хук: {hook.Message}");
-            if (!graphCleared) notes.Add("Граф не очищен — база недоступна.");
-
-            Show(string.Join(" ", notes), ok: hook.Ok && graphCleared);
+            var result = await Provisioning.DisconnectAsync(repository, CancellationToken.None);
+            Show(result.Message, result.Ok);
             await Reload();
         }
         finally
