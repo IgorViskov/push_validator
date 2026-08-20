@@ -163,7 +163,7 @@ src/ReviewAgent.Core/        движок ревью: граф состояни�
 src/ReviewAgent.Data/        реестр репозиториев и журнал прогонов (EF Core + SQLite)
 src/ReviewAgent.Web/         хост: админка на Blazor, API для хука, фоновая индексация
 samples/ShopDemo/            тестовое приложение на C# для демонстрации
-samples/demo/                скрипты подготовки стенда и заготовленные правки (sh и PowerShell)
+samples/demo/                сценарии показа: demo.cmd для Windows, *.sh для остальных
 docs/                        архитектура, решения, замеры моделей, сценарий показа
 ```
 
