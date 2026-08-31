@@ -4,5 +4,20 @@ obj/
 riderModule.iml
 /_ReSharper.Caches/
 .idea/*
-launchSettings.json
+.vs/
+
+# Локальные профили запуска: адрес модели и имена переменных с ключами у каждого свои
+**/Properties/launchSettings.json
+**/appsettings.Development.json
 *.DotSettings.user
+*.user
+
+# Настройки конкретной машины: порт, путь к репозиториям, ключ модели
+.env
+
+# Реестр репозиториев и журнал прогонов — состояние стенда, не исходник
+data/
+logs/
+*.db
+*.db-shm
+*.db-wal

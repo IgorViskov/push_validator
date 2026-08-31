@@ -1,0 +1,41 @@
+<Project>
+
+  <!-- Централизованное управление версиями пакетов: до объединения два решения
+       ссылались на разные версии одних и тех же библиотек (Spectre 0.51 против 0.57,
+       Microsoft.Extensions.* вразнобой). Здесь версия задаётся один раз. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- LLM: function-calling и structured output -->
+    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.8.3" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.8.3" />
+    <PackageVersion Include="OpenAI" Version="2.12.0" />
+
+    <!-- Инфраструктура -->
+    <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
+
+    <!-- Граф кода -->
+    <PackageVersion Include="Neo4j.Driver" Version="6.3.0" />
+
+    <!-- Разбор C# для наполнения графа -->
+    <PackageVersion Include="Microsoft.Build.Locator" Version="1.9.1" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.6.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="5.6.0" />
+
+    <!-- Реестр репозиториев и журнал прогонов -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10" />
+
+    <!-- Транзитивно EF Core 10.0.10 тянет 2.1.11 с известной уязвимостью (GHSA-2m69-gcr7-jv3q).
+         Поднимаем явно: собственного API у нас к нему нет, ломаться нечему. -->
+    <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
+  </ItemGroup>
+
+</Project>

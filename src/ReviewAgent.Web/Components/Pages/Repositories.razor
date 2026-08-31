@@ -1,0 +1,366 @@
+@page "/"
+@inject RepositoryRegistry Registry
+@inject RepositoryProvisioning Provisioning
+@inject GitHookInstaller Hooks
+@inject IndexingQueue Indexing
+@inject IGraphStore Graph
+@inject ReviewOrchestrator Orchestrator
+@inject RunActivityBus Bus
+@inject NavigationManager Navigation
+@inject IOptions<HookOptions> HookSettings
+@implements IDisposable
+
+<PageTitle>Репозитории — ReviewAgent</PageTitle>
+
+<h1>Обслуживаемые репозитории</h1>
+<p class="lead">
+    Агент проверяет изменения перед пушем. Подключённый репозиторий получает хук
+    <code>pre-push</code>, который спрашивает агента о судьбе пуша.
+</p>
+
+@if (_message is not null)
+{
+    <div class="notice @(_messageOk ? "good" : "bad")">@_message</div>
+}
+
+<div class="panel">
+    <h2 style="margin-top:0">Подключить репозиторий</h2>
+    <p class="small muted">
+        Путь указывается так, как его видит агент. В контейнере это точка монтирования —
+        например <code>/repos/my-project</code> для каталога, смонтированного через
+        <code>REPOS_ROOT</code>.
+    </p>
+
+    <div class="grid">
+        <div class="field">
+            <label for="path">Путь к рабочему дереву git</label>
+            <input id="path" type="text" @bind="_newPath" @bind:event="oninput"
+                   placeholder="/repos/my-project" />
+        </div>
+        <div class="field">
+            <label for="name">Название (необязательно)</label>
+            <input id="name" type="text" @bind="_newName" placeholder="берётся из имени каталога" />
+        </div>
+        <div class="field">
+            <label for="solution">Файл решения (необязательно)</label>
+            <input id="solution" type="text" @bind="_newSolution"
+                   placeholder="агент найдёт .sln сам" />
+        </div>
+    </div>
+
+    <div class="row">
+        <button class="primary" @onclick="Add" disabled="@(_busy || string.IsNullOrWhiteSpace(_newPath))">
+            Подключить и проиндексировать
+        </button>
+        @if (_candidates.Count > 0)
+        {
+            <span class="small muted">
+                Найдено рядом:
+                @foreach (var candidate in _candidates)
+                {
+                    <button class="small" style="padding:2px 8px;margin-left:4px"
+                            @onclick="() => _newPath = candidate">@candidate</button>
+                }
+            </span>
+        }
+    </div>
+</div>
+
+@if (_repositories.Count == 0)
+{
+    <div class="panel">
+        <p class="muted" style="margin:0">
+            Пока ни один репозиторий не обслуживается. Укажите путь выше — агент проверит,
+            что это рабочее дерево git, поставит хук и наполнит граф кода.
+        </p>
+    </div>
+}
+else
+{
+    @foreach (var repository in _repositories)
+    {
+        var state = _hookStates.GetValueOrDefault(repository.Key, HookState.Missing);
+        var indexing = Indexing.StatusOf(repository.Key);
+
+        <div class="panel">
+            <div class="row" style="justify-content:space-between;align-items:flex-start">
+                <div>
+                    <h2 style="margin:0 0 4px">
+                        @repository.Name
+                        @if (!repository.Enabled)
+                        {
+                            <span class="badge muted" style="margin-left:8px">исключён</span>
+                        }
+                    </h2>
+                    <div class="mono muted">@repository.Path</div>
+                    <div class="small muted" style="margin-top:6px">
+                        ключ <code>@repository.Key</code> ·
+                        хук: @HookLabel(state) ·
+                        граф: @GraphLabel(repository)
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button @onclick="() => Reindex(repository)" disabled="@_busy">Переиндексировать</button>
+
+                    @if (state == HookState.Installed)
+                    {
+                        <button @onclick="() => RemoveHook(repository)" disabled="@_busy">Снять хук</button>
+                    }
+                    else
+                    {
+                        <button @onclick="() => InstallHook(repository, state == HookState.Foreign)"
+                                disabled="@_busy">
+                            @(state == HookState.Foreign ? "Перезаписать хук" : "Поставить хук")
+                        </button>
+                    }
+
+                    <button @onclick="() => Toggle(repository)" disabled="@_busy">
+                        @(repository.Enabled ? "Исключить" : "Вернуть")
+                    </button>
+                    <button class="danger" @onclick="() => Remove(repository)" disabled="@_busy">Удалить</button>
+                </div>
+            </div>
+
+            @if (indexing is not null && indexing.State is "queued" or "running")
+            {
+                <div class="notice">Индексация: @indexing.Message</div>
+            }
+            else if (indexing is { State: "failed" })
+            {
+                <div class="notice bad">Индексация не удалась: @indexing.Message</div>
+            }
+            else if (repository.LastIndexError is { Length: > 0 } error)
+            {
+                <div class="notice bad">Замечания последней индексации: @error</div>
+            }
+
+            <details>
+                <summary>Как проверить вручную</summary>
+                <p class="small muted">
+                    Проверка из админки берёт незапушенные коммиты рабочего дерева — так же,
+                    как это сделал бы хук.
+                </p>
+                <div class="row">
+                    <button @onclick="() => RunNow(repository)" disabled="@_busy">
+                        Проверить текущие изменения
+                    </button>
+                    <a class="btn" href="live">Смотреть живой лог</a>
+                </div>
+            </details>
+
+            <details>
+                <summary>Текст устанавливаемого хука</summary>
+                <pre>@Hooks.Preview(repository.Key, repository.Token)</pre>
+            </details>
+        </div>
+    }
+}
+
+<div class="panel">
+    <h3 style="margin-top:0">Как это работает</h3>
+    <ol class="small muted" style="margin:0;padding-left:20px;line-height:1.7">
+        <li>Подключение репозитория ставит <code>pre-push</code> и запускает полную индексацию графа кода.</li>
+        <li>
+            <code>git push</code> запускает хук: тот проверяет живость агента на
+            <code>@HookSettings.Value.PublicUrl</code>, при необходимости поднимает контейнер
+            и отправляет дифф.
+        </li>
+        <li>Агент обновляет граф по изменённым файлам, прогоняет сценарий и возвращает вердикт.</li>
+        <li>Критические находки останавливают пуш. Продавить осознанно: <code>REVIEW_AGENT_FORCE=1 git push</code>.</li>
+    </ol>
+</div>
+
+@code {
+    private List<WatchedRepository> _repositories = [];
+    private readonly Dictionary<string, HookState> _hookStates = new(StringComparer.Ordinal);
+    private List<string> _candidates = [];
+
+    private string _newPath = string.Empty;
+    private string _newName = string.Empty;
+    private string _newSolution = string.Empty;
+
+    private string? _message;
+    private bool _messageOk;
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Indexing.Changed += OnIndexingChanged;
+        _candidates = FindCandidates();
+        await Reload();
+    }
+
+    public void Dispose() => Indexing.Changed -= OnIndexingChanged;
+
+    private void OnIndexingChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task Reload()
+    {
+        _repositories = await Registry.ListAsync(CancellationToken.None);
+
+        _hookStates.Clear();
+        foreach (var repository in _repositories)
+        {
+            _hookStates[repository.Key] = await Hooks.GetStateAsync(repository.Path, CancellationToken.None);
+        }
+    }
+
+    private async Task Add()
+    {
+        _busy = true;
+        try
+        {
+            // Тот же сервис, что и за HTTP-API: подключение — это три связанных действия
+            // (реестр, хук, индексация), и две реализации рано или поздно разъехались бы.
+            var result = await Provisioning.ConnectAsync(
+                _newPath, _newName, _newSolution, overwriteForeignHook: false, CancellationToken.None);
+
+            if (result.Repository is not null)
+            {
+                _newPath = _newName = _newSolution = string.Empty;
+            }
+
+            Show(result.Message, result.Ok);
+            await Reload();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task InstallHook(WatchedRepository repository, bool overwrite)
+    {
+        var result = await Hooks.InstallAsync(
+            repository.Path, repository.Key, repository.Token, overwrite, CancellationToken.None);
+
+        repository.HookInstalled = result.Ok;
+        repository.HookInstalledAt = result.Ok ? DateTimeOffset.Now : repository.HookInstalledAt;
+        await Registry.SaveAsync(CancellationToken.None);
+
+        Show(result.Message, result.Ok);
+        await Reload();
+    }
+
+    private async Task RemoveHook(WatchedRepository repository)
+    {
+        var result = await Hooks.RemoveAsync(repository.Path, CancellationToken.None);
+
+        if (result.Ok)
+        {
+            repository.HookInstalled = false;
+            repository.HookInstalledAt = null;
+            await Registry.SaveAsync(CancellationToken.None);
+        }
+
+        Show(result.Message, result.Ok);
+        await Reload();
+    }
+
+    private async Task Toggle(WatchedRepository repository)
+    {
+        await Registry.SetEnabledAsync(repository, !repository.Enabled, CancellationToken.None);
+        Show(repository.Enabled
+            ? $"{repository.Name} снова обслуживается."
+            : $"{repository.Name} исключён: пуши проходят без проверки.", ok: true);
+    }
+
+    /// <summary>
+    /// Исключение из обслуживания снимает и хук: оставленный хук продолжал бы обращаться
+    /// к агенту, получал бы отказ «репозиторий не обслуживается» и тормозил каждый пуш.
+    /// Граф репозитория тоже стирается — держать в базе слепок кода, который больше
+    /// не обслуживается, незачем.
+    /// </summary>
+    private async Task Remove(WatchedRepository repository)
+    {
+        _busy = true;
+        try
+        {
+            var result = await Provisioning.DisconnectAsync(repository, CancellationToken.None);
+            Show(result.Message, result.Ok);
+            await Reload();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Reindex(WatchedRepository repository)
+    {
+        Indexing.Enqueue(repository);
+        Show($"Полная переиндексация {repository.Name} поставлена в очередь.", ok: true);
+    }
+
+    private async Task RunNow(WatchedRepository repository)
+    {
+        _busy = true;
+        try
+        {
+            var progress = Bus.ProgressFor(repository.Key);
+            var review = await Orchestrator.RunAsync(
+                repository, diff: string.Empty, branch: null, source: "ui", progress,
+                CancellationToken.None);
+
+            Navigation.NavigateTo($"runs/{review.Run.Id}");
+        }
+        catch (Exception ex)
+        {
+            Show($"Проверка сорвалась: {ex.Message}", ok: false);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Show(string message, bool ok)
+    {
+        _message = message;
+        _messageOk = ok;
+    }
+
+    private static string HookLabel(HookState state) => state switch
+    {
+        HookState.Installed => "установлен",
+        HookState.Foreign => "чужой pre-push",
+        _ => "нет"
+    };
+
+    private static string GraphLabel(WatchedRepository repository) =>
+        repository.LastIndexedAt is null
+            ? "не индексировался"
+            : $"{repository.GraphNodes} узлов, {repository.GraphEdges} рёбер " +
+              $"({repository.LastIndexedAt:dd.MM HH:mm})";
+
+    /// <summary>
+    /// Подсказка по каталогам, которые агент видит. Без неё первый вопрос пользователя —
+    /// «какой путь тут вообще писать», потому что путь хоста внутри контейнера не работает.
+    /// </summary>
+    private static List<string> FindCandidates()
+    {
+        var roots = new[] { "/repos", "/workspace" };
+
+        foreach (var root in roots)
+        {
+            if (!Directory.Exists(root)) continue;
+
+            try
+            {
+                return Directory.EnumerateDirectories(root)
+                    .Where(d => Directory.Exists(Path.Combine(d, ".git")) ||
+                                File.Exists(Path.Combine(d, ".git")))
+                    .Take(12)
+                    .Select(d => d.Replace('\\', '/'))
+                    .ToList();
+            }
+            catch (Exception)
+            {
+                // Каталог недоступен — подсказки просто не будет.
+            }
+        }
+
+        return [];
+    }
+}

@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ReviewAgent.CodeGraph/ReviewAgent.CodeGraph.csproj" />
+    <Project Path="src/ReviewAgent.Core/ReviewAgent.Core.csproj" />
+    <Project Path="src/ReviewAgent.Data/ReviewAgent.Data.csproj" />
+    <Project Path="src/ReviewAgent.Web/ReviewAgent.Web.csproj" />
+  </Folder>
+</Solution>

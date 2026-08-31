@@ -1,0 +1,216 @@
+@page "/runs/{Id:int}"
+@inject ReviewJournal Journal
+
+<PageTitle>Разбор прогона — ReviewAgent</PageTitle>
+
+@if (_run is null)
+{
+    <h1>Прогон не найден</h1>
+    <p class="lead">Записи с таким номером в журнале нет.</p>
+    <a class="btn" href="runs">К истории прогонов</a>
+}
+else
+{
+    <h1>
+        Прогон #@_run.Id
+        <span class="badge @(_run.Decision == "Allowed" ? "ok" : "crit")" style="margin-left:10px;font-size:13px">
+            @(_run.Decision == "Allowed" ? "пуш разрешён" : "пуш остановлен")
+        </span>
+    </h1>
+    <p class="lead">
+        @(_run.Repository?.Name ?? "—")@(_run.Branch is null ? "" : $" · ветка {_run.Branch}")
+        · @_run.StartedAt.ToString("dd.MM.yyyy HH:mm:ss")
+        · заказан @(_run.Source == "hook" ? "хуком pre-push" : "из админки")
+    </p>
+
+    <div class="panel">
+        <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
+            <div class="stat"><b>@Outcome(_run.Outcome)</b><span>исход прогона</span></div>
+            <div class="stat"><b>@($"{_run.DurationMs / 1000.0:0.0} с")</b><span>время</span></div>
+            <div class="stat">
+                <b>@(_run.CostUsd > 0 ? $"${_run.CostUsd:F4}" : "—")</b>
+                <span>@(_run.InputTokens + _run.OutputTokens) токенов</span>
+            </div>
+            <div class="stat"><b>@_run.Complexity/10</b><span>сложность изменений</span></div>
+            <div class="stat"><b>@_run.ModelCalls</b><span>обращений к моделям</span></div>
+            <div class="stat"><b>@_run.GraphQueries</b><span>запросов к графу</span></div>
+            <div class="stat"><b>@_run.ImpactChunks</b><span>фрагментов влияния</span></div>
+            <div class="stat"><b>@_run.DiffLines</b><span>строк диффа</span></div>
+        </div>
+
+        <p class="small muted" style="margin:16px 0 0">
+            Модель анализа: <code>@(_run.ExecutionModel ?? "—")</code>
+            @if (_run.GraphStatus is { Length: > 0 })
+            {
+                <br /><text>Граф кода: @_run.GraphStatus</text>
+            }
+            @if (_run.AbortReason is { Length: > 0 })
+            {
+                <br /><strong style="color:var(--crit)">Аварийная остановка: @_run.AbortReason</strong>
+            }
+        </p>
+
+        @if (_degradations.Count > 0)
+        {
+            <p class="small" style="margin:10px 0 0;color:var(--warn)">
+                Запасные пути: @string.Join("; ", _degradations)
+            </p>
+        }
+    </div>
+
+    <div class="panel">
+        <h2 style="margin-top:0">Находки (@_run.Findings.Count)</h2>
+
+        @if (_run.Findings.Count == 0)
+        {
+            <p class="muted" style="margin:0">Замечаний нет.</p>
+        }
+        else
+        {
+            @foreach (var finding in _run.Findings.OrderByDescending(f => ReviewJournal.ParseSeverity(f.Severity)))
+            {
+                var severity = ReviewJournal.ParseSeverity(finding.Severity);
+                <div class="finding">
+                    <div class="head">
+                        <span class="badge @SeverityClass(severity)">@SeverityLabel(severity)</span>
+                        <span class="small muted">@finding.Stage</span>
+                        @if (finding.File is { Length: > 0 })
+                        {
+                            <span class="path">@finding.File</span>
+                        }
+                    </div>
+                    <div>@finding.Message</div>
+                </div>
+            }
+        }
+    </div>
+
+    <div class="panel">
+        <h2 style="margin-top:0">Маршрут по графу состояний</h2>
+        <p class="small muted">
+            По маршруту видно, какие ветки сработали: пошёл ли сценарий в граф кода,
+            был ли второй проход по требованию арбитра.
+        </p>
+        <ol class="route small">
+            @foreach (var step in _route)
+            {
+                <li><code>@step.State → @(step.Next ?? "конец")</code> — @step.Reason</li>
+            }
+        </ol>
+    </div>
+
+    @if (_modelCalls.Count > 0)
+    {
+        <div class="panel table-scroll">
+            <h2 style="margin-top:0">Обращения к моделям</h2>
+            <table>
+                <thead>
+                <tr>
+                    <th>Этап</th><th>Модель</th><th class="num">Попыток</th><th class="num">Время</th>
+                    <th class="num">Вход</th><th class="num">Выход</th><th>Итог</th><th>Ошибка</th>
+                </tr>
+                </thead>
+                <tbody>
+                @foreach (var call in _modelCalls)
+                {
+                    <tr>
+                        <td class="mono">@call.Stage</td>
+                        <td class="mono">@call.Model</td>
+                        <td class="num">@call.Attempts</td>
+                        <td class="num">@($"{call.ElapsedMs / 1000:0.0} с")</td>
+                        <td class="num">@call.InputTokens</td>
+                        <td class="num">@call.OutputTokens</td>
+                        <td><span class="badge @CallClass(call.Outcome)">@call.Outcome</span></td>
+                        <td class="small muted">@call.Error</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @if (_guardrails.Count > 0 || _toolCalls.Count > 0)
+    {
+        <div class="panel">
+            <h2 style="margin-top:0">Предохранители и инструменты</h2>
+
+            @if (_toolCalls.Count > 0)
+            {
+                <p class="small">
+                    Вызовы инструментов:
+                    @string.Join(", ", _toolCalls.Select(t => $"{t.Key} × {t.Value}"))
+                </p>
+            }
+
+            @if (_guardrails.Count > 0)
+            {
+                <table>
+                    <thead><tr><th>Когда</th><th>Предохранитель</th><th>Подробности</th></tr></thead>
+                    <tbody>
+                    @foreach (var guardrail in _guardrails)
+                    {
+                        <tr>
+                            <td class="num small">@($"{guardrail.AtMs / 1000:0.0} с")</td>
+                            <td class="mono">@guardrail.Kind</td>
+                            <td class="small">@guardrail.Detail</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        </div>
+    }
+
+    <a class="btn" href="runs">К истории прогонов</a>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private ReviewRunRecord? _run;
+    private IReadOnlyList<TraceEntry> _route = [];
+    private IReadOnlyList<GuardrailEvent> _guardrails = [];
+    private IReadOnlyList<ModelCallMetric> _modelCalls = [];
+    private IReadOnlyList<string> _degradations = [];
+    private IReadOnlyDictionary<string, int> _toolCalls = new Dictionary<string, int>();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _run = await Journal.GetAsync(Id, CancellationToken.None);
+        if (_run is null) return;
+
+        _route = ReviewJournal.Read<TraceEntry>(_run.RouteJson);
+        _guardrails = ReviewJournal.Read<GuardrailEvent>(_run.GuardrailsJson);
+        _modelCalls = ReviewJournal.Read<ModelCallMetric>(_run.ModelCallsJson);
+        _degradations = ReviewJournal.Read<string>(_run.DegradationsJson);
+        _toolCalls = ReviewJournal.ReadCounters(_run.ToolCallsJson);
+    }
+
+    private static string Outcome(string outcome) => outcome switch
+    {
+        "Success" => "успех",
+        "Degraded" => "деградация",
+        _ => "остановлен"
+    };
+
+    private static string SeverityLabel(Severity severity) => severity switch
+    {
+        Severity.Critical => "критично",
+        Severity.Warning => "предупреждение",
+        _ => "информация"
+    };
+
+    private static string SeverityClass(Severity severity) => severity switch
+    {
+        Severity.Critical => "crit",
+        Severity.Warning => "warn",
+        _ => "muted"
+    };
+
+    private static string CallClass(string outcome) => outcome switch
+    {
+        "ok" => "ok",
+        "skipped" => "muted",
+        _ => "crit"
+    };
+}

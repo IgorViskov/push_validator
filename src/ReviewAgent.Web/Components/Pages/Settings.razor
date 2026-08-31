@@ -1,0 +1,285 @@
+@page "/settings"
+@inject IConfiguration Config
+@inject IOptions<LlmOptions> Llm
+@inject IOptions<GuardrailOptions> Guardrails
+@inject IOptions<ImpactOptions> Impact
+@inject IOptions<GraphOptions> GraphSettings
+@inject IOptions<HookOptions> Hook
+@inject IOptions<StorageOptions> Storage
+@inject CognitiveRouter Router
+@inject IGraphStore Graph
+
+<PageTitle>Настройки — ReviewAgent</PageTitle>
+
+<h1>Настройки</h1>
+<p class="lead">
+    Все настройки задаются конфигурацией контейнера и здесь показаны в том виде, в каком они
+    применились. Рядом с каждой — имя переменной окружения: двойное подчёркивание
+    в ней означает уровень вложенности (<code>Llm__Providers__0__Endpoint</code> — это
+    <code>Llm:Providers:0:Endpoint</code>).
+</p>
+
+<div class="notice">
+    Правки в этой странице не предусмотрены намеренно. Настройка, изменённая в браузере,
+    живёт до перезапуска контейнера и расходится с тем, что записано в
+    <code>docker-compose.yml</code>; после перезапуска агент ведёт себя иначе, чем вчера,
+    и причина не находится. Источник правды один — конфигурация образа.
+</div>
+
+<div class="panel">
+    <h2 style="margin-top:0">Состояние агента</h2>
+    <table>
+        <tbody>
+        <tr>
+            <td>Разбор кода (.NET SDK для Roslyn)</td>
+            <td>
+                @if (MSBuildBootstrapper.RegisteredSdk is { } sdk)
+                {
+                    <span class="badge ok">готов</span> <span class="mono small">@sdk</span>
+                }
+                else
+                {
+                    <span class="badge crit">не найден</span>
+                    <span class="small muted">граф наполнять нечем — в образе нужен .NET SDK, не только рантайм</span>
+                }
+            </td>
+        </tr>
+        <tr>
+            <td>Графовая база</td>
+            <td>
+                @if (_graphAvailable is null)
+                {
+                    <span class="badge muted">проверяется…</span>
+                }
+                else if (_graphAvailable == true)
+                {
+                    <span class="badge ok">отвечает</span>
+                }
+                else
+                {
+                    <span class="badge crit">недоступна</span>
+                    <span class="small muted">
+                        проверка продолжит работать, но без контекста влияния
+                    </span>
+                }
+                <span class="mono small">@GraphSettings.Value.Uri</span>
+            </td>
+        </tr>
+        <tr>
+            <td>Роли без модели</td>
+            <td>
+                @if (Router.MissingRoles.Count == 0)
+                {
+                    <span class="badge ok">все роли обеспечены</span>
+                }
+                else
+                {
+                    <span class="badge crit">@string.Join(", ", Router.MissingRoles)</span>
+                    <span class="small muted">соответствующие этапы работать не будут</span>
+                }
+            </td>
+        </tr>
+        <tr>
+            <td>Файл реестра (персистентность)</td>
+            <td class="mono small">@Storage.Value.DatabasePath</td>
+        </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="panel table-scroll">
+    <h2 style="margin-top:0">Модели по ролям</h2>
+    <p class="small muted">
+        Orchestration — триаж и арбитраж, Execution — анализ диффа с инструментами,
+        Validation — независимая проверка по тексту. Для Execution роутер выбирает самую
+        дешёвую модель, чей <code>CostEfficiency</code> не ниже оценённой сложности.
+    </p>
+
+    @if (Llm.Value.AllModels().Count == 0)
+    {
+        <p class="notice bad" style="margin:0">
+            Ни одной модели не задано. Заполните <code>Llm:Providers</code> — без этого
+            ни один этап проверки не отработает.
+        </p>
+    }
+    else
+    {
+        <table>
+            <thead>
+            <tr>
+                <th>Роль</th><th>Модель</th><th>Провайдер</th><th>Endpoint</th>
+                <th class="num">Приоритет</th><th class="num">Ум/цена</th>
+                <th>Схема</th><th>Инструменты</th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var model in Llm.Value.AllModels().OrderBy(m => m.Role).ThenByDescending(m => m.Priority))
+            {
+                <tr>
+                    <td>@model.Role</td>
+                    <td class="mono">@model.Name</td>
+                    <td class="small">@model.Provider.Name</td>
+                    <td class="mono small">@model.Provider.Endpoint</td>
+                    <td class="num">@model.Priority</td>
+                    <td class="num">@model.CostEfficiency</td>
+                    <td>@Yes(model.SupportsStructuredOutput)</td>
+                    <td>@Yes(model.SupportsTools)</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    }
+</div>
+
+<div class="panel table-scroll">
+    <h2 style="margin-top:0">Предохранители</h2>
+    <table>
+        <thead><tr><th>Что ограничивает</th><th>Значение</th><th>Переменная окружения</th></tr></thead>
+        <tbody>
+        @foreach (var row in GuardrailRows())
+        {
+            <tr>
+                <td>@row.Title</td>
+                <td class="mono">@row.Value</td>
+                <td class="mono small muted">@row.Variable</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+<div class="panel table-scroll">
+    <h2 style="margin-top:0">Граф кода и контекст влияния</h2>
+    <table>
+        <thead><tr><th>Настройка</th><th>Значение</th><th>Переменная окружения</th></tr></thead>
+        <tbody>
+        @foreach (var row in GraphRows())
+        {
+            <tr>
+                <td>@row.Title</td>
+                <td class="mono">@row.Value</td>
+                <td class="mono small muted">@row.Variable</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+<div class="panel table-scroll">
+    <h2 style="margin-top:0">Хук pre-push</h2>
+    <table>
+        <thead><tr><th>Настройка</th><th>Значение</th><th>Переменная окружения</th></tr></thead>
+        <tbody>
+        @foreach (var row in HookRows())
+        {
+            <tr>
+                <td>@row.Title</td>
+                <td class="mono">@row.Value</td>
+                <td class="mono small muted">@row.Variable</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+    <p class="small muted" style="margin-bottom:0">
+        Изменение этих настроек требует переустановки хука: их значения вписаны в текст
+        скрипта, который лежит в чужом рабочем дереве.
+    </p>
+</div>
+
+@code {
+    private bool? _graphAvailable;
+
+    private sealed record Row(string Title, string Value, string Variable);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _graphAvailable = await Graph.IsAvailableAsync(CancellationToken.None);
+    }
+
+    private IEnumerable<Row> GuardrailRows()
+    {
+        var value = Guardrails.Value;
+
+        yield return new Row("Предел стоимости прогона, USD",
+            value.Budget.MaxCostUsd == 0 ? "не ограничен" : value.Budget.MaxCostUsd.ToString("0.00"),
+            "Guardrails__Budget__MaxCostUsd");
+        yield return new Row("Предел токенов", value.Budget.MaxTokens.ToString(),
+            "Guardrails__Budget__MaxTokens");
+        yield return new Row("Предел времени прогона, с", value.Budget.MaxDurationSeconds.ToString(),
+            "Guardrails__Budget__MaxDurationSeconds");
+        yield return new Row("Предел обращений к моделям", value.Budget.MaxModelCalls.ToString(),
+            "Guardrails__Budget__MaxModelCalls");
+        yield return new Row("Предел обращений к графу", value.Budget.MaxGraphQueries.ToString(),
+            "Guardrails__Budget__MaxGraphQueries");
+        yield return new Row("Предел переходов по графу состояний", value.MaxTransitions.ToString(),
+            "Guardrails__MaxTransitions");
+        yield return new Row("Повторов при сетевом сбое", value.Retry.MaxAttempts.ToString(),
+            "Guardrails__Retry__MaxAttempts");
+        yield return new Row("Неудач до размыкания предохранителя модели",
+            value.CircuitBreaker.FailureThreshold.ToString(),
+            "Guardrails__CircuitBreaker__FailureThreshold");
+        yield return new Row("Квота read_file / search_files / git_log / graph_impact",
+            $"{value.Tools.ReadFile} / {value.Tools.SearchFiles} / {value.Tools.GitLog} / {value.Tools.GraphImpact}",
+            "Guardrails__Tools__ReadFile и далее");
+        yield return new Row("Чтение вне репозитория",
+            value.Tools.AllowOutsideRepository ? "разрешено" : "запрещено",
+            "Guardrails__Tools__AllowOutsideRepository");
+        yield return new Row("Закрытые для инструментов файлы",
+            string.Join(", ", value.Tools.DeniedFiles),
+            "Guardrails__Tools__DeniedFiles__0");
+        yield return new Row("Находок принимается с одного этапа",
+            value.Output.MaxFindingsPerStage.ToString(),
+            "Guardrails__Output__MaxFindingsPerStage");
+        yield return new Row("Проверять существование файлов в находках",
+            value.Output.VerifyFilePaths ? "да" : "нет",
+            "Guardrails__Output__VerifyFilePaths");
+    }
+
+    private IEnumerable<Row> GraphRows()
+    {
+        var impact = Impact.Value;
+        var graph = GraphSettings.Value;
+
+        yield return new Row("Адрес графовой базы", graph.Uri, "Graph__Uri");
+        yield return new Row("Пользователь базы", graph.User, "Graph__User");
+        yield return new Row("Пароль базы", graph.Password.Length > 0 ? "задан" : "не задан", "Graph__Password");
+        yield return new Row("Спрашивать граф о влиянии", impact.Enabled ? "да" : "нет", "Impact__Enabled");
+        yield return new Row("Обновлять граф перед анализом",
+            impact.RefreshGraphBeforeReview ? "да" : "нет", "Impact__RefreshGraphBeforeReview");
+        yield return new Row("Порог сложности для запроса влияния",
+            impact.ComplexityThreshold.ToString(), "Impact__ComplexityThreshold");
+        yield return new Row("Символов в запросе к графу", impact.MaxSymbols.ToString(), "Impact__MaxSymbols");
+        yield return new Row("Фрагментов из графа", impact.MaxChunks.ToString(), "Impact__MaxChunks");
+        yield return new Row("Бюджет блока влияния в промпте, символов",
+            impact.MaxContextChars.ToString(), "Impact__MaxContextChars");
+        yield return new Row("Вторых проходов по требованию арбитра",
+            impact.MaxArbiterRetries.ToString(), "Impact__MaxArbiterRetries");
+        yield return new Row("Хранить прогонов на репозиторий",
+            Storage.Value.KeepRunsPerRepository.ToString(), "Storage__KeepRunsPerRepository");
+        yield return new Row("Файл реестра", Storage.Value.DatabasePath, "Storage__DatabasePath");
+    }
+
+    private IEnumerable<Row> HookRows()
+    {
+        var hook = Hook.Value;
+
+        yield return new Row("Адрес агента для хука", hook.PublicUrl, "Hook__PublicUrl");
+        yield return new Row("Команда автозапуска",
+            hook.AutostartCommand.Length > 0 ? hook.AutostartCommand : "отключён",
+            "Hook__AutostartCommand");
+        yield return new Row("Ожидание готовности после запуска, с",
+            hook.StartupWaitSeconds.ToString(), "Hook__StartupWaitSeconds");
+        yield return new Row("Таймаут ожидания вердикта, с",
+            hook.ReviewTimeoutSeconds.ToString(), "Hook__ReviewTimeoutSeconds");
+        yield return new Row("Если агент недоступен",
+            hook.OnUnavailable == "block" ? "остановить пуш" : "пропустить пуш",
+            "Hook__OnUnavailable");
+        yield return new Row("Разрешать REVIEW_AGENT_FORCE",
+            hook.AllowForceOverride ? "да" : "нет", "Hook__AllowForceOverride");
+        yield return new Row("Порт, на котором слушает агент внутри контейнера",
+            Config["ASPNETCORE_HTTP_PORTS"] ?? Config["Urls"] ?? "8080",
+            "ASPNETCORE_HTTP_PORTS");
+    }
+
+    private static string Yes(bool value) => value ? "да" : "нет";
+}

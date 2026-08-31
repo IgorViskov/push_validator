@@ -1,0 +1,78 @@
+@page "/live"
+@inject RunActivityBus Bus
+@implements IDisposable
+
+<PageTitle>Живой лог — ReviewAgent</PageTitle>
+
+<h1>Живой лог</h1>
+<p class="lead">
+    Ход текущей проверки: переходы по графу состояний, вызовы инструментов, обращения
+    к графу кода. То же, что хук печатает в терминал разработчика.
+</p>
+
+<div class="panel">
+    <div class="row" style="justify-content:space-between">
+        <span class="small muted">событий: @_activities.Count</span>
+        <button @onclick="Clear">Очистить</button>
+    </div>
+
+    <div class="log" style="margin-top:12px">
+        @if (_activities.Count == 0)
+        {
+            <p class="muted small" style="margin:0">
+                Пока тихо. Сделайте <code>git push</code> в обслуживаемом репозитории —
+                события появятся здесь по мере работы агента.
+            </p>
+        }
+        else
+        {
+            @foreach (var activity in _activities.AsEnumerable().Reverse())
+            {
+                <div class="log-line @activity.Event.Kind.ToString().ToLowerInvariant()">
+                    <time>@activity.Event.At.ToString("HH:mm:ss")</time>
+                    <span class="kind">@Label(activity.Event.Kind)</span>
+                    <span>@activity.RepositoryKey · @activity.Event.Message</span>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private readonly List<RunActivity> _activities = [];
+    private IDisposable? _subscription;
+
+    protected override void OnInitialized()
+    {
+        _activities.AddRange(Bus.Snapshot());
+        _subscription = Bus.Subscribe(OnActivity);
+    }
+
+    public void Dispose() => _subscription?.Dispose();
+
+    private void OnActivity(RunActivity activity)
+    {
+        // Приходит из потока прогона, а не из потока рендеринга: без InvokeAsync
+        // Blazor обновит дерево не в своём контексте синхронизации.
+        InvokeAsync(() =>
+        {
+            _activities.Add(activity);
+            if (_activities.Count > 400) _activities.RemoveRange(0, 100);
+            StateHasChanged();
+        });
+    }
+
+    private void Clear() => _activities.Clear();
+
+    private static string Label(ReviewProgressKind kind) => kind switch
+    {
+        ReviewProgressKind.Stage => "этап",
+        ReviewProgressKind.Transition => "переход",
+        ReviewProgressKind.Tool => "инструмент",
+        ReviewProgressKind.Model => "модель",
+        ReviewProgressKind.Graph => "граф",
+        ReviewProgressKind.Warning => "внимание",
+        ReviewProgressKind.Done => "вердикт",
+        _ => "инфо"
+    };
+}

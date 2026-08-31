@@ -1,0 +1,30 @@
+# Артефакты сборки: их пересобирает сам образ, а в контексте они только раздувают
+# передачу и портят кеш слоёв.
+**/bin/
+**/obj/
+**/out/
+
+.git/
+.gitignore
+.idea/
+.vs/
+.vscode/
+.claude/
+
+# Локальные данные и логи
+data/
+logs/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+
+# Локальные профили запуска: там адрес модели и имена переменных с ключами
+**/Properties/launchSettings.json
+**/appsettings.Development.json
+**/*.user
+
+docs/
+samples/
+*.md
+docker-compose*.yml
+.env

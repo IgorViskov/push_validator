@@ -1,0 +1,13 @@
+diff --git a/src/ShopDemo.Domain/Pricing/PriceCalculator.cs b/src/ShopDemo.Domain/Pricing/PriceCalculator.cs
+index 9b945c6..09f4d96 100644
+--- a/src/ShopDemo.Domain/Pricing/PriceCalculator.cs
++++ b/src/ShopDemo.Domain/Pricing/PriceCalculator.cs
+@@ -44,7 +44,7 @@ public sealed class PriceCalculator
+             applied.Add($"{policy.Name}: {policyRate:P0}");
+         }
+ 
+-        rate = Math.Min(rate, MaxDiscountRate);
++        // Потолок снят: маркетинг просил складывать акции без ограничений.
+ 
+         return new PriceBreakdown(
+             Subtotal: order.Subtotal,

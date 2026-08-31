@@ -1,0 +1,14 @@
+diff --git a/src/ShopDemo.Domain/Pricing/PriceCalculator.cs b/src/ShopDemo.Domain/Pricing/PriceCalculator.cs
+index 9b945c6..3e29cfc 100644
+--- a/src/ShopDemo.Domain/Pricing/PriceCalculator.cs
++++ b/src/ShopDemo.Domain/Pricing/PriceCalculator.cs
+@@ -53,6 +53,7 @@ public sealed class PriceCalculator
+             AppliedPolicies: applied);
+     }
+ 
+-    /// <summary>Только сумма к оплате — короткий путь для тех, кому разбивка не нужна.</summary>
+-    public decimal CalculateTotal(Order order) => Calculate(order).Total;
++    /// <summary>Сумма к оплате с доставкой.</summary>
++    public decimal CalculateTotal(Order order, decimal shippingCost) =>
++        Calculate(order).Total + shippingCost;
+ }
